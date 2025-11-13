@@ -1,0 +1,17 @@
+sequenceDiagram
+participant U as User(browser)
+participant FE as Frontend React
+participant BE as Backend FastAPI
+participant DB as InfluxDB
+
+U->>FE: login(credentials)
+FE->>BE: POST /api/v1/auth/login
+BE-->>FE: access_token
+FE->>BE: GET /api/v1/devices
+BE-->>FE: devices list
+U->>FE: open device detail
+FE->>BE: GET /api/v1/devices/{id}
+BE->>DB: query timeseries
+DB-->>BE: timeseries
+BE-->>FE: timeseries + latest telemetry
+FE-->>U: render charts
