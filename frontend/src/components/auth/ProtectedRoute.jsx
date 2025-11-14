@@ -1,6 +1,7 @@
 import React from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import { Lock } from 'lucide-react'
 
 export default function ProtectedRoute({ children, requiredRole }) {
   const { isAuthenticated, hasRole, loading } = useAuth()
@@ -27,7 +28,9 @@ export default function ProtectedRoute({ children, requiredRole }) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="text-center max-w-md">
-          <div className="text-6xl mb-4">🔒</div>
+          <div className="flex justify-center mb-4">
+            <Lock className="w-16 h-16 text-red-600" />
+          </div>
           <h1 className="text-2xl font-bold mb-2">Accès Refusé</h1>
           <p className="text-muted-foreground">
             Vous n'avez pas les permissions nécessaires pour accéder à cette page.

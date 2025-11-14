@@ -1,6 +1,7 @@
 import React, { createContext, useState, useContext, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
+import { api } from '@/lib/api'
 
 const AuthContext = createContext(null)
 
@@ -49,52 +50,21 @@ export const AuthProvider = ({ children }) => {
   }, [])
 
   const login = async (username, password) => {
-    try {
-      // Simulate API call - replace with actual API endpoint
-      return new Promise((resolve, reject) => {
-        setTimeout(() => {
-          // Demo credentials - replace with actual authentication
-          const validUsers = [
-            { username: 'admin', password: 'admin123', role: 'admin', name: 'Administrateur' },
-            { username: 'operator', password: 'oper123', role: 'operator', name: 'Opérateur' },
-            { username: 'viewer', password: 'view123', role: 'viewer', name: 'Lecteur' },
-          ]
-
-          const foundUser = validUsers.find(
-            u => u.username === username && u.password === password
-          )
-
-          if (foundUser) {
-            // Generate a simple token (in production, this comes from backend)
-            const token = btoa(JSON.stringify({
-              username: foundUser.username,
-              timestamp: new Date().getTime()
-            }))
-
-            // Set token expiry (24 hours)
-            const expiryTime = new Date().getTime() + (24 * 60 * 60 * 1000)
-
-            const userData = {
-              username: foundUser.username,
-              role: foundUser.role,
-              name: foundUser.name
-            }
-
-            // Store in localStorage
-            localStorage.setItem('siac_user', JSON.stringify(userData))
-            localStorage.setItem('siac_token', token)
-            localStorage.setItem('siac_token_expiry', expiryTime.toString())
-
-            setUser(userData)
-            resolve(userData)
-          } else {
-            reject(new Error('Identifiants incorrects'))
-          }
-        }, 1000)
-      })
-    } catch (error) {
-      throw error
+    const res = await api.login(username, password)
+    // Backend returns: access_token, refresh_token, token_type, username, role
+    const token = res.access_token
+    const expiryTime = new Date().getTime() + (24 * 60 * 60 * 1000)
+    const userData = {
+      username: res.username || username,
+      role: res.role || (username === 'admin' ? 'admin' : 'viewer'),
+      name: res.username || username,
     }
+
+    localStorage.setItem('siac_user', JSON.stringify(userData))
+    localStorage.setItem('siac_token', token)
+    localStorage.setItem('siac_token_expiry', expiryTime.toString())
+    setUser(userData)
+    return userData
   }
 
   const logout = () => {

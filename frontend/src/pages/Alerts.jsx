@@ -142,7 +142,6 @@ export default function Alerts(){
           </ul>
         </ContentCard>
       </div>
-      </div>
     </div>
   )
 }

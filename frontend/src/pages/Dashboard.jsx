@@ -1,38 +1,37 @@
-﻿import React from 'react'
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react'
+import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
-import { Activity, TrendingUp, AlertTriangle, Database, Wifi, CheckCircle, Zap, ArrowUpRight, BarChart3, LineChart } from 'lucide-react'
+import { Activity, TrendingUp, AlertTriangle, Database, Wifi, CheckCircle, Zap, ArrowUpRight, BarChart3, LineChart, RefreshCw, Brain, Calendar, Sparkles, HardDrive, TrendingDown } from 'lucide-react'
 import { StatCard, ContentCard, ActivityItem, ProgressBar } from '@/components/cards'
 import { PageHeader } from '@/components/layout'
 import { LineChart as RechartsLine, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import AnimatedBackground from '@/components/AnimatedBackground'
+import { api } from '@/lib/api'
 
 export default function Dashboard() {
-  const activities = [
-    { id: 1, text: 'ESP32_Sensor_01 connecté', time: 'Il y a 5 min', type: 'success', icon: CheckCircle },
-    { id: 2, text: 'Anomalie détectée sur RPi_Gateway_03', time: 'Il y a 12 min', type: 'danger', icon: AlertTriangle },
-    { id: 3, text: 'Alerte haute température résolue', time: 'Il y a 1h', type: 'warning', icon: Zap },
-    { id: 4, text: 'Nouveau device enregistré: Sensor_07', time: 'Il y a 2h', type: 'info', icon: Wifi },
-  ]
+  const [devices, setDevices] = useState([])
+  const [backendConnected, setBackendConnected] = useState(false)
+  const [modelStatus, setModelStatus] = useState(null)
+  const loadDevices = async () => {
+    try {
+      const data = await api.getDevices()
+      setDevices(Array.isArray(data) ? data : [])
+      setBackendConnected(true)
+    } catch (e) {
+      setBackendConnected(false)
+    }
+  }
+  useEffect(() => { loadDevices() }, [])
+  const [recentAlerts, setRecentAlerts] = useState([])
+  const [summary, setSummary] = useState({ devices_count: 0, alerts_active: 0, anomalies_24h: 0, data_volume_today_gb: 0 })
+  const [activitySeries, setActivitySeries] = useState([])
+  const [volumeSeries, setVolumeSeries] = useState([])
+  const seenAlertsRef = useRef(new Set())
 
   // Chart data
-  const deviceActivityData = [
-    { time: '00:00', devices: 18, alerts: 2 },
-    { time: '04:00', devices: 20, alerts: 1 },
-    { time: '08:00', devices: 22, alerts: 3 },
-    { time: '12:00', devices: 24, alerts: 2 },
-    { time: '16:00', devices: 23, alerts: 4 },
-    { time: '20:00', devices: 24, alerts: 1 },
-  ]
+  const deviceActivityData = activitySeries
 
-  const dataVolumeData = [
-    { day: 'Lun', volume: 0.8 },
-    { day: 'Mar', volume: 1.2 },
-    { day: 'Mer', volume: 0.9 },
-    { day: 'Jeu', volume: 1.5 },
-    { day: 'Ven', volume: 1.3 },
-    { day: 'Sam', volume: 1.0 },
-    { day: 'Dim', volume: 1.2 },
-  ]
+  const dataVolumeData = volumeSeries
 
   const anomalyTrendData = [
     { month: 'Jan', anomalies: 12 },
@@ -63,45 +62,119 @@ export default function Dashboard() {
     }
   }
 
+  const loadSummary = async () => {
+    try {
+      const s = await api.getDashboardSummary()
+      setSummary(s)
+    } catch {}
+    try {
+      const alerts = await api.getRecentAlerts(4)
+      setRecentAlerts(alerts || [])
+    } catch {}
+    try {
+      const act = await api.getDevicesActivity24h()
+      setActivitySeries(Array.isArray(act) ? act : [])
+    } catch {}
+    try {
+      const vol = await api.getDataVolume7d()
+      setVolumeSeries(Array.isArray(vol) ? vol : [])
+    } catch {}
+    try {
+      const ml = await api.getModelStatus()
+      setModelStatus(ml)
+    } catch {}
+  }
+
+  useEffect(() => { loadSummary() }, [])
+
+  // Poll for high severity alerts and toast when new
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const latest = await api.getRecentAlerts(5)
+        for (const a of latest || []) {
+          if (a.severity === 'high' && !seenAlertsRef.current.has(a.alert_id)) {
+            seenAlertsRef.current.add(a.alert_id)
+            toast.error(`${a.device_id}: ${a.reason || 'Alerte haute sévérité'}`, { duration: 6000 })
+          }
+        }
+      } catch {}
+    }, 10000)
+    return () => clearInterval(interval)
+  }, [])
+
   return (
-    <div className="space-y-6 relative">
+    <div className="space-y-6 relative min-h-screen">
       <AnimatedBackground />
       <div className="relative" style={{zIndex: 10}}>
-      <PageHeader 
-        title="Tableau de bord" 
-        description="Vue d'ensemble de votre infrastructure IoT"
-      />
+      
+      {/* Enhanced Header */}
+      <div className="rounded-2xl p-8 mb-8">
+        <div className="flex items-center justify-center flex-wrap gap-3">
+          <span
+              className={`px-4 py-2 text-sm rounded-full font-semibold shadow-lg transition-all ${
+                backendConnected 
+                  ? 'bg-green-500 text-white border-2 border-green-300' 
+                  : 'bg-red-500 text-white border-2 border-red-300'
+              }`}
+              title={backendConnected ? 'Backend opérationnel' : 'Backend indisponible'}
+            >
+              <span className={`inline-block w-2 h-2 rounded-full mr-2 ${backendConnected ? 'bg-green-200 animate-pulse' : 'bg-red-200'}`}></span>
+              {backendConnected ? 'Connecté' : 'Déconnecté'}
+            </span>
+            {modelStatus && (
+              <span
+                className={`px-4 py-2 text-sm rounded-full font-semibold shadow-lg flex items-center gap-2 ${
+                  modelStatus.status === 'trained' 
+                    ? 'bg-emerald-500 text-white border-2 border-emerald-300' 
+                    : 'bg-yellow-500 text-white border-2 border-yellow-300'
+                }`}
+              >
+                <Brain className="w-4 h-4" />
+                ML: {modelStatus.status === 'trained' ? 'Actif' : 'En attente'}
+              </span>
+            )}
+            <Button 
+              onClick={() => { loadDevices(); loadSummary(); }} 
+              className="bg-white hover:bg-gray-50 shadow-lg font-semibold px-6 py-2 flex items-center gap-2"
+              style={{color: '#7F0202'}}
+            >
+              <RefreshCw className="w-4 h-4" />
+              Rafraîchir
+            </Button>
+        </div>
+      </div>
 
-      {/* Stats Grid */}
+      {/* Stats Grid with enhanced design */}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title="Appareils Actifs"
-          value="24"
-          description="+3 depuis hier"
+          title="Appareils Connectés"
+          value={devices.length.toString()}
+          description={backendConnected ? 'Tous opérationnels' : 'Hors ligne'}
           icon={Activity}
           gradient="from-green-500 via-green-600 to-green-700"
         />
         
         <StatCard
           title="Alertes Actives"
-          value="3"
-          description="Attention requise"
+          value={summary.alerts_active.toString()}
+          description={summary.alerts_active > 0 ? 'Intervention requise' : 'Tout va bien'}
           icon={AlertTriangle}
           gradient="from-red-500 via-rose-600 to-pink-700"
         />
         
         <StatCard
-          title="Anomalies (24h)"
-          value="7"
-          description="-3 vs semaine dernière"
+          title="Anomalies Détectées"
+          value={summary.anomalies_24h.toString()}
+          description="Dernières 24 heures"
           icon={Zap}
           gradient="from-amber-500 via-orange-600 to-yellow-600"
         />
         
         <StatCard
-          title="Volume de données"
-          value="1.2 GB"
-          description="Aujourd'hui"
+          title="Données Traitées"
+          value={`${summary.data_volume_today_gb} GB`}
+          description="Volume aujourd'hui"
           icon={Database}
           gradient="from-cyan-500 via-blue-600 to-indigo-700"
         />
@@ -117,29 +190,82 @@ export default function Dashboard() {
           gradientTo="purple-50"
         >
           <div className="space-y-3">
-            {activities.map((activity) => (
-              <ActivityItem
-                key={activity.id}
-                text={activity.text}
-                time={activity.time}
-                type={activity.type}
-                icon={activity.icon}
-                getActivityColor={getActivityColor}
-                getBadgeVariant={getBadgeVariant}
-              />
-            ))}
+            {recentAlerts.length === 0 ? (
+              <div className="text-gray-500 text-sm">Aucune alerte récente</div>
+            ) : (
+              recentAlerts.map((a) => {
+                const type = a.severity === 'high' ? 'danger' : a.severity === 'medium' ? 'warning' : 'info'
+                const icon = a.severity === 'high' ? AlertTriangle : a.severity === 'medium' ? Zap : Wifi
+                const time = new Date(a.ts).toLocaleString('fr-FR')
+                const text = `${a.device_id}: ${a.reason || 'Alerte détectée'}`
+                return (
+                  <ActivityItem
+                    key={a.alert_id}
+                    text={text}
+                    time={time}
+                    type={type}
+                    icon={icon}
+                    getActivityColor={getActivityColor}
+                    getBadgeVariant={getBadgeVariant}
+                    actions={[
+                      {
+                        label: 'Ack',
+                        onClick: async () => {
+                          try { await api.acknowledgeAlert(a.alert_id); await loadSummary() } catch {}
+                        }
+                      }
+                    ]}
+                  />
+                )
+              })
+            )}
           </div>
         </ContentCard>
 
         <ContentCard
           title="État du Système"
-          description="Performances globales"
+          description="Performances et santé globale"
           icon={TrendingUp}
           iconColor="blue"
           gradientFrom="blue-50"
           gradientTo="indigo-50"
         >
           <div className="space-y-5">
+            {/* ML Model Status - Featured */}
+            {modelStatus && (
+              <div className="p-4 rounded-xl shadow-lg border-2 transform hover:scale-[1.02] transition-all" style={{background: 'linear-gradient(to right, #7F0202, #311156)', borderColor: 'rgba(127, 2, 2, 0.5)'}}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Brain className="w-6 h-6 text-white" />
+                    <span className="text-white font-bold text-lg">Modèle ML IsolationForest</span>
+                  </div>
+                  <span className={`px-3 py-1.5 text-xs rounded-full font-bold shadow-md flex items-center gap-1 ${
+                    modelStatus.status === 'trained' ? 'bg-green-400 text-green-900 border-2 border-green-200' :
+                    modelStatus.status === 'training' ? 'bg-yellow-400 text-yellow-900 border-2 border-yellow-200' :
+                    modelStatus.status === 'error' ? 'bg-red-400 text-red-900 border-2 border-red-200' :
+                    'bg-gray-400 text-gray-900 border-2 border-gray-200'
+                  }`}>
+                    {modelStatus.status === 'trained' ? <><CheckCircle className="w-3 h-3" /> ENTRAÎNÉ</> :
+                     modelStatus.status === 'training' ? <><RefreshCw className="w-3 h-3 animate-spin" /> EN COURS</> :
+                     modelStatus.status === 'error' ? <><AlertTriangle className="w-3 h-3" /> ERREUR</> :
+                     <><TrendingDown className="w-3 h-3" /> EN ATTENTE</>}
+                  </span>
+                </div>
+                {modelStatus.trained_at && (
+                  <div className="text-xs text-purple-100 flex items-center gap-1">
+                    <Calendar className="w-3 h-3" />
+                    <span>Entraîné le {new Date(modelStatus.trained_at).toLocaleString('fr-FR')}</span>
+                  </div>
+                )}
+                {modelStatus.status === 'trained' && (
+                  <div className="mt-2 text-xs text-purple-100 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" />
+                    <span>Détection d'anomalies active sur toute la télémétrie entrante</span>
+                  </div>
+                )}
+              </div>
+            )}
+            
             <ProgressBar 
               label="Santé des capteurs" 
               percentage={96} 
@@ -151,7 +277,7 @@ export default function Dashboard() {
               gradient="linear-gradient(to right, #3730a3, #6366f1)" 
             />
             <ProgressBar 
-              label="Modèle IA (précision)" 
+              label="Précision détection" 
               percentage={94} 
               gradient="linear-gradient(to right, #7c3aed, #a78bfa)" 
             />
@@ -160,8 +286,9 @@ export default function Dashboard() {
               percentage={67} 
               gradient="linear-gradient(to right, rgb(234, 179, 8), rgb(234, 88, 12))" 
             />
-            <Button className="w-full mt-4 shadow-md hover:shadow-lg transition-all duration-200" style={{background: 'linear-gradient(to right, #7F0202, #311156)', color: 'white'}} variant="default">
-              <Activity className="w-4 h-4 mr-2" />
+            
+            <Button className="w-full mt-4 shadow-lg hover:shadow-xl transition-all duration-200 text-base font-semibold" style={{background: 'linear-gradient(to right, #7F0202, #311156)', color: 'white'}} variant="default">
+              <Activity className="w-5 h-5 mr-2" />
               Voir tous les appareils
             </Button>
           </div>

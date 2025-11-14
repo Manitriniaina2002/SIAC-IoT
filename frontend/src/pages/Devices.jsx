@@ -5,15 +5,16 @@ import { StatCard, ContentCard } from '@/components/cards'
 import { PageHeader } from '@/components/layout'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog'
+import { api } from '@/lib/api'
 import AnimatedBackground from '@/components/AnimatedBackground'
 
 export default function Devices(){
-  const [devices, setDevices] = useState([
-    {id: 'esp32-001', name: 'Capteur Température Bureau', status: 'online', lastSeen: 'Il y a 2 min', type: 'ESP32', temp: '22.5°C', history: []},
-    {id: 'esp32-002', name: 'Capteur Humidité Entrepôt', status: 'online', lastSeen: 'Il y a 5 min', type: 'ESP32', temp: '18.3°C', history: []},
-    {id: 'rpi-001', name: 'Gateway Principal', status: 'warning', lastSeen: 'Il y a 15 min', type: 'Raspberry Pi', temp: '45.2°C', history: []},
-    {id: 'esp32-003', name: 'Capteur Mouvement Hall', status: 'online', lastSeen: 'Il y a 1 min', type: 'ESP32', temp: '21.8°C', history: []},
-  ])
+  const [devices, setDevices] = useState([])
+  const [backendConnected, setBackendConnected] = useState(false)
+  const [isCreating, setIsCreating] = useState(false)
+  const [isUpdating, setIsUpdating] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false)
 
   // UI State
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
@@ -49,6 +50,28 @@ export default function Devices(){
 
   // MQTT Simulation
   const [mqttConnected, setMqttConnected] = useState(false)
+    // Map backend device to UI model
+    const mapDevice = (d) => ({
+      id: d.device_id,
+      name: d.name || d.device_id,
+      status: 'online',
+      lastSeen: d.last_seen ? new Date(d.last_seen).toLocaleString('fr-FR') : '—',
+      type: Array.isArray(d.tags) && d.tags.length ? d.tags[0] : 'ESP32',
+      temp: '—',
+      history: [],
+    })
+
+    // Load from backend
+    const loadDevices = async () => {
+      try {
+        const data = await api.getDevices()
+        setDevices(Array.isArray(data) ? data.map(mapDevice) : [])
+        setBackendConnected(true)
+      } catch (e) {
+        setBackendConnected(false)
+      }
+    }
+    useEffect(() => { loadDevices() }, [])
   const [lastMqttMessage, setLastMqttMessage] = useState(null)
 
   // Audit Log
@@ -87,6 +110,19 @@ export default function Devices(){
             ? { ...d, temp: `${randomTemp}°C`, lastSeen: 'Il y a quelques secondes' }
             : d
         ))
+
+        // Send to backend as telemetry (best-effort)
+        try {
+          const tx = Math.floor(50000 + Math.random() * 100000)
+          const rx = Math.floor(50000 + Math.random() * 100000)
+          const conns = Math.floor(1 + Math.random() * 10)
+          api.sendTelemetry({
+            device_id: randomDevice.id,
+            ts: new Date().toISOString(),
+            sensors: { temperature: parseFloat(randomTemp) },
+            net: { tx_bytes: tx, rx_bytes: rx, connections: conns },
+          }).catch(() => {})
+        } catch {}
 
         addAuditEntry('MQTT_UPDATE', randomDevice.id, `Température mise à jour: ${randomTemp}°C`)
       }, 5000)
@@ -213,27 +249,28 @@ export default function Devices(){
     setIsAddDialogOpen(true)
   }
 
-  const handleCreateDevice = () => {
+  const handleCreateDevice = async () => {
     if (!formData.id || !formData.name) {
       toast.error('ID et Nom sont requis')
       return
     }
-
-    if (devices.find(d => d.id === formData.id)) {
-      toast.error('Un device avec cet ID existe déjà')
-      return
+    setIsCreating(true)
+    try {
+      await api.createDevice({
+        device_id: formData.id,
+        name: formData.name,
+        fw_version: undefined,
+        tags: formData.type ? [formData.type] : [],
+      })
+      await loadDevices()
+      setIsAddDialogOpen(false)
+      toast.success(`Device ${formData.name} ajouté avec succès`)
+      addAuditEntry('CREATE', formData.id, `Device créé: ${formData.name}`)
+    } catch (e) {
+      toast.error(e.message || 'Erreur lors de la création')
+    } finally {
+      setIsCreating(false)
     }
-
-    const newDevice = {
-      ...formData,
-      lastSeen: 'Il y a quelques secondes',
-      history: []
-    }
-
-    setDevices([...devices, newDevice])
-    setIsAddDialogOpen(false)
-    toast.success(`Device ${formData.name} ajouté avec succès`)
-    addAuditEntry('CREATE', formData.id, `Device créé: ${formData.name}`)
   }
 
   // UPDATE
@@ -243,26 +280,27 @@ export default function Devices(){
     setIsEditDialogOpen(true)
   }
 
-  const handleUpdateDevice = () => {
+  const handleUpdateDevice = async () => {
     if (!formData.name) {
       toast.error('Le nom est requis')
       return
     }
-
-    setDevices(devices.map(d => 
-      d.id === selectedDevice.id ? { 
-        ...formData, 
-        lastSeen: 'Il y a quelques secondes',
-        history: [...(d.history || []), {
-          timestamp: new Date().toISOString(),
-          action: 'UPDATE',
-          changes: formData
-        }]
-      } : d
-    ))
-    setIsEditDialogOpen(false)
-    toast.success(`Device ${formData.name} mis à jour`)
-    addAuditEntry('UPDATE', selectedDevice.id, `Device mis à jour: ${formData.name}`)
+    setIsUpdating(true)
+    try {
+      await api.updateDevice(selectedDevice.id, {
+        name: formData.name,
+        fw_version: undefined,
+        tags: formData.type ? [formData.type] : [],
+      })
+      await loadDevices()
+      setIsEditDialogOpen(false)
+      toast.success(`Device ${formData.name} mis à jour`)
+      addAuditEntry('UPDATE', selectedDevice.id, `Device mis à jour: ${formData.name}`)
+    } catch (e) {
+      toast.error(e.message || 'Erreur lors de la mise à jour')
+    } finally {
+      setIsUpdating(false)
+    }
   }
 
   // DELETE
@@ -271,11 +309,19 @@ export default function Devices(){
     setIsDeleteDialogOpen(true)
   }
 
-  const handleConfirmDelete = () => {
-    setDevices(devices.filter(d => d.id !== selectedDevice.id))
-    setIsDeleteDialogOpen(false)
-    toast.success(`Device ${selectedDevice.name} supprimé`)
-    addAuditEntry('DELETE', selectedDevice.id, `Device supprimé: ${selectedDevice.name}`)
+  const handleConfirmDelete = async () => {
+    setIsDeleting(true)
+    try {
+      await api.deleteDevice(selectedDevice.id)
+      await loadDevices()
+      setIsDeleteDialogOpen(false)
+      toast.success(`Device ${selectedDevice?.name || selectedDevice?.id} supprimé`)
+      addAuditEntry('DELETE', selectedDevice.id, `Device supprimé: ${selectedDevice?.name || selectedDevice?.id}`)
+    } catch (e) {
+      toast.error(e.message || 'Erreur lors de la suppression')
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   // BULK DELETE
@@ -287,18 +333,21 @@ export default function Devices(){
     setIsBulkDeleteDialogOpen(true)
   }
 
-  const handleConfirmBulkDelete = () => {
-    const deletedNames = devices
-      .filter(d => selectedDevices.includes(d.id))
-      .map(d => d.name)
-      .join(', ')
-    
-    setDevices(devices.filter(d => !selectedDevices.includes(d.id)))
-    setSelectedDevices([])
-    setSelectAll(false)
-    setIsBulkDeleteDialogOpen(false)
-    toast.success(`${selectedDevices.length} devices supprimés`)
-    addAuditEntry('BULK_DELETE', 'MULTIPLE', `${selectedDevices.length} devices supprimés`)
+  const handleConfirmBulkDelete = async () => {
+    setIsBulkDeleting(true)
+    try {
+      await Promise.all(selectedDevices.map((id) => api.deleteDevice(id)))
+      setSelectedDevices([])
+      setSelectAll(false)
+      await loadDevices()
+      setIsBulkDeleteDialogOpen(false)
+      toast.success(`${selectedDevices.length} devices supprimés`)
+      addAuditEntry('BULK_DELETE', 'MULTIPLE', `${selectedDevices.length} devices supprimés`)
+    } catch (e) {
+      toast.error(e.message || 'Erreur lors de la suppression multiple')
+    } finally {
+      setIsBulkDeleting(false)
+    }
   }
 
   // View History
@@ -328,7 +377,13 @@ export default function Devices(){
             description="Gestion de vos appareils connectés"
             icon={Radio}
           />
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
+            <span
+              className={`px-2 py-1 text-xs rounded-full font-semibold border ${backendConnected ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}
+              title={backendConnected ? 'Backend opérationnel' : 'Backend indisponible'}
+            >
+              Backend: {backendConnected ? 'Connected' : 'Down'}
+            </span>
             <Button
               onClick={() => setMqttConnected(!mqttConnected)}
               className="flex items-center gap-2"
@@ -342,8 +397,10 @@ export default function Devices(){
             </Button>
             <Button
               onClick={handleAdd}
+              disabled={!backendConnected}
               className="flex items-center gap-2"
-              style={{background: 'linear-gradient(to right, #7F0202, #311156)', color: 'white'}}
+              style={{background: 'linear-gradient(to right, #7F0202, #311156)', color: 'white', opacity: backendConnected ? 1 : 0.6}}
+              title={backendConnected ? 'Ajouter un device' : 'Backend indisponible'}
             >
               <Plus size={20} />
               Ajouter
@@ -575,16 +632,20 @@ export default function Devices(){
                             <History size={18} style={{color: '#8b5cf6'}} />
                           </button>
                           <button 
-                            onClick={() => handleEdit(d)}
+                            onClick={() => backendConnected && handleEdit(d)}
                             className="p-2 rounded-lg hover:bg-blue-50 transition-colors"
-                            title="Modifier"
+                            title={backendConnected ? 'Modifier' : 'Backend indisponible'}
+                            disabled={!backendConnected}
+                            style={{opacity: backendConnected ? 1 : 0.5, cursor: backendConnected ? 'pointer' : 'not-allowed'}}
                           >
                             <Edit2 size={18} style={{color: '#3b82f6'}} />
                           </button>
                           <button 
-                            onClick={() => handleDelete(d)}
+                            onClick={() => backendConnected && handleDelete(d)}
                             className="p-2 rounded-lg hover:bg-red-50 transition-colors"
-                            title="Supprimer"
+                            title={backendConnected ? 'Supprimer' : 'Backend indisponible'}
+                            disabled={!backendConnected}
+                            style={{opacity: backendConnected ? 1 : 0.5, cursor: backendConnected ? 'pointer' : 'not-allowed'}}
                           >
                             <Trash2 size={18} style={{color: '#ef4444'}} />
                           </button>
@@ -761,11 +822,12 @@ export default function Devices(){
               </Button>
               <Button
                 onClick={handleCreateDevice}
+                disabled={isCreating}
                 style={{background: 'linear-gradient(to right, #7F0202, #311156)', color: 'white'}}
                 className="flex items-center gap-2"
               >
                 <Save size={18} />
-                Ajouter
+                {isCreating ? 'Ajout...' : 'Ajouter'}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -861,11 +923,12 @@ export default function Devices(){
               </Button>
               <Button
                 onClick={handleUpdateDevice}
+                disabled={isUpdating}
                 style={{background: 'linear-gradient(to right, #7F0202, #311156)', color: 'white'}}
                 className="flex items-center gap-2"
               >
                 <Save size={18} />
-                Enregistrer
+                {isUpdating ? 'Enregistrement...' : 'Enregistrer'}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -899,11 +962,12 @@ export default function Devices(){
               </Button>
               <Button
                 onClick={handleConfirmDelete}
+                disabled={isDeleting}
                 style={{background: '#ef4444', color: 'white'}}
                 className="hover:opacity-90 flex items-center gap-2"
               >
                 <Trash2 size={18} />
-                Supprimer
+                {isDeleting ? 'Suppression...' : 'Supprimer'}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1036,16 +1100,16 @@ export default function Devices(){
               </Button>
               <Button
                 onClick={handleConfirmBulkDelete}
+                disabled={isBulkDeleting}
                 style={{background: '#ef4444', color: 'white'}}
                 className="hover:opacity-90 flex items-center gap-2"
               >
                 <Trash2 size={18} />
-                Supprimer tout ({selectedDevices.length})
+                {isBulkDeleting ? 'Suppression...' : `Supprimer tout (${selectedDevices.length})`}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
       </div>
     </div>
   )
