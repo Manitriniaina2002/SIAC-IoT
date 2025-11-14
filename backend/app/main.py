@@ -49,53 +49,97 @@ def on_startup():
     # Seed initial data if empty (idempotent)
     db = SessionLocal()
     try:
-        # Lightweight SQLite migration: add users.email column if missing
+        # Check if using PostgreSQL or SQLite
+        db_url = os.getenv("DATABASE_URL", "sqlite:///./siac.db")
+        is_postgres = db_url.startswith("postgresql://") or db_url.startswith("postgres://")
+        
+        # Migration: add columns if missing
         try:
-            cols = db.execute(text("PRAGMA table_info(users)")).fetchall()
-            col_names = {row[1] for row in cols}
-            if "email" not in col_names:
-                db.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
-                db.commit()
-        except Exception:
-            pass
+            if is_postgres:
+                # PostgreSQL: Check and add columns if they don't exist
+                # Check for email column in users table
+                result = db.execute(text("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='users' AND column_name='email'
+                """)).fetchone()
+                if not result:
+                    db.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
+                    db.commit()
+                
+                # Check for type column in devices table
+                result = db.execute(text("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='devices' AND column_name='type'
+                """)).fetchone()
+                if not result:
+                    db.execute(text("ALTER TABLE devices ADD COLUMN type VARCHAR(100)"))
+                    db.commit()
+                
+                # Check for location column in devices table
+                result = db.execute(text("""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name='devices' AND column_name='location'
+                """)).fetchone()
+                if not result:
+                    db.execute(text("ALTER TABLE devices ADD COLUMN location VARCHAR(255)"))
+                    db.commit()
+            else:
+                # SQLite: Use PRAGMA
+                cols = db.execute(text("PRAGMA table_info(users)")).fetchall()
+                col_names = {row[1] for row in cols}
+                if "email" not in col_names:
+                    db.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
+                    db.commit()
 
-        # Add type and location columns to devices table if missing
+                cols = db.execute(text("PRAGMA table_info(devices)")).fetchall()
+                col_names = {row[1] for row in cols}
+                if "type" not in col_names:
+                    db.execute(text("ALTER TABLE devices ADD COLUMN type VARCHAR(100)"))
+                    db.commit()
+                if "location" not in col_names:
+                    db.execute(text("ALTER TABLE devices ADD COLUMN location VARCHAR(255)"))
+                    db.commit()
+        except Exception as e:
+            db.rollback()
+            print(f"Migration error (non-critical): {e}")
+
+        # Seed devices if empty
         try:
-            cols = db.execute(text("PRAGMA table_info(devices)")).fetchall()
-            col_names = {row[1] for row in cols}
-            if "type" not in col_names:
-                db.execute(text("ALTER TABLE devices ADD COLUMN type VARCHAR(100)"))
+            device_count = db.query(DeviceORM).count()
+            if device_count == 0:
+                now = datetime.utcnow()
+                seed = [
+                    DeviceORM(device_id="esp32-001", name="Capteur Bureau", fw_version="1.0.0", last_seen=now, tags=["office", "temp"], type="sensor", location="Bureau A"),
+                    DeviceORM(device_id="esp32-002", name="Capteur Entrepôt", fw_version="1.0.1", last_seen=now, tags=["warehouse", "humidity"], type="sensor", location="Entrepôt B"),
+                    DeviceORM(device_id="rpi-001", name="Gateway Principal", fw_version="2.3.4", last_seen=now, tags=["gateway", "edge"], type="gateway", location="Salle serveur"),
+                    DeviceORM(device_id="esp32-003", name="Capteur Hall", fw_version="1.0.2", last_seen=now, tags=["motion", "lobby"], type="sensor", location="Hall d'entrée"),
+                ]
+                db.add_all(seed)
                 db.commit()
-            if "location" not in col_names:
-                db.execute(text("ALTER TABLE devices ADD COLUMN location VARCHAR(255)"))
-                db.commit()
-        except Exception:
-            pass
-
-        if db.query(DeviceORM).count() == 0:
-            now = datetime.utcnow()
-            seed = [
-                DeviceORM(device_id="esp32-001", name="Capteur Bureau", fw_version="1.0.0", last_seen=now, tags=["office", "temp"], type="sensor", location="Bureau A"),
-                DeviceORM(device_id="esp32-002", name="Capteur Entrepôt", fw_version="1.0.1", last_seen=now, tags=["warehouse", "humidity"], type="sensor", location="Entrepôt B"),
-                DeviceORM(device_id="rpi-001", name="Gateway Principal", fw_version="2.3.4", last_seen=now, tags=["gateway", "edge"], type="gateway", location="Salle serveur"),
-                DeviceORM(device_id="esp32-003", name="Capteur Hall", fw_version="1.0.2", last_seen=now, tags=["motion", "lobby"], type="sensor", location="Hall d'entrée"),
-            ]
-            db.add_all(seed)
-            db.commit()
+        except Exception as e:
+            db.rollback()
+            print(f"Device seed error: {e}")
 
         # Seed default admin user if not exists
-        admin = db.query(UserORM).filter(UserORM.username == "admin").first()
-        if not admin:
-            pwd = get_password_hash("admin123")
-            db.add(UserORM(username="admin", hashed_password=pwd, role="admin", email="admin@siac.local", created_at=datetime.utcnow()))
-            db.commit()
-        else:
-            # If existing admin has non-pbkdf2 hash (e.g., legacy bcrypt), reset to default for compatibility
-            if admin.hashed_password and not admin.hashed_password.startswith("$pbkdf2-sha256$") and not admin.hashed_password.startswith("pbkdf2_sha256$"):
-                admin.hashed_password = get_password_hash("admin123")
-                if not admin.email:
-                    admin.email = "admin@siac.local"
+        try:
+            admin = db.query(UserORM).filter(UserORM.username == "admin").first()
+            if not admin:
+                pwd = get_password_hash("admin123")
+                db.add(UserORM(username="admin", hashed_password=pwd, role="admin", email="admin@siac.local", created_at=datetime.utcnow()))
                 db.commit()
+            else:
+                # If existing admin has non-pbkdf2 hash (e.g., legacy bcrypt), reset to default for compatibility
+                if admin.hashed_password and not admin.hashed_password.startswith("$pbkdf2-sha256$") and not admin.hashed_password.startswith("pbkdf2_sha256$"):
+                    admin.hashed_password = get_password_hash("admin123")
+                    if not admin.email:
+                        admin.email = "admin@siac.local"
+                    db.commit()
+        except Exception as e:
+            db.rollback()
+            print(f"User seed error: {e}")
+    except Exception as e:
+        db.rollback()
+        print(f"Startup error: {e}")
     finally:
         db.close()
     
