@@ -2,6 +2,20 @@
 
 Plateforme moderne de surveillance IoT avec détection d'anomalies par Machine Learning et interface de gestion en temps réel.
 
+## 🌐 Application déployée
+
+**🚀 Backend API :** https://siac-iot-backend.onrender.com  
+**📚 Documentation API :** https://siac-iot-backend.onrender.com/docs  
+**🎨 Frontend :** https://siac-iot-frontend.onrender.com *(si déployé)*
+
+**Connexion :**
+- Username : `admin`
+- Password : `admin123`
+
+> ⚠️ **Note :** Le service gratuit Render se met en veille après 15 minutes d'inactivité. Le premier chargement peut prendre 30-60 secondes (cold start).
+
+---
+
 ## 🚀 Fonctionnalités
 
 ### Backend (FastAPI)
