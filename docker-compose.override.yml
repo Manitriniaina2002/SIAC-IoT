@@ -1,0 +1,48 @@
+version: "3.8"
+
+# Override file for development environment
+# This file is automatically merged with docker-compose.yml when running docker-compose
+
+services:
+  backend:
+    environment:
+      - DATABASE_URL=postgresql://siac:password@postgres:5432/siac_db
+      - MQTT_BROKER=mosquitto
+      - MQTT_PORT=1883
+      - INFLUXDB_URL=http://influxdb:8086
+      - PYTHONUNBUFFERED=1
+      - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://frontend:80,http://localhost:3000
+    volumes:
+      - ./backend:/app
+      - /app/venv # Don't mount virtual environment
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import requests; requests.get('http://localhost:8000/api/v1/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules # Don't mount node_modules
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    ports:
+      - "5173:5173" # Vite dev server port
+    environment:
+      - VITE_API_URL=http://localhost:8000

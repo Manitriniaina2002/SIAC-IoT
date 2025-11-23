@@ -67,6 +67,36 @@ SIAC-IoT/
 
 ```
 
+## 🐳 Architecture Docker
+
+La plateforme SIAC-IoT utilise une architecture microservices avec 6 services principaux :
+
+### Services
+
+- **PostgreSQL** : Base de données principale pour les données IoT, utilisateurs et alertes
+- **Backend (FastAPI)** : API REST avec ML pour la détection d'anomalies
+- **Frontend (React)** : Interface utilisateur moderne avec dashboard temps réel
+- **Mosquitto (MQTT)** : Broker MQTT pour la communication IoT
+- **InfluxDB** : Base de données de séries temporelles pour les métriques
+- **Grafana** : Plateforme de visualisation et monitoring avancé
+
+### Réseau
+
+Tous les services communiquent via un réseau Docker bridge dédié (`siac-network`) avec résolution DNS automatique.
+
+### Volumes
+
+- `postgres_data` : Persistance des données PostgreSQL
+- `influxdb_data` : Persistance des métriques InfluxDB
+- `grafana_data` : Persistance des dashboards Grafana
+- `mosquitto_data` : Persistance des données MQTT
+
+### Santé et monitoring
+
+- Health checks automatiques pour tous les services
+- Logs centralisés via Docker
+- Restart policies configurées pour la production
+
 ## 🛠️ Installation et démarrage
 
 ### Prérequis
@@ -89,10 +119,30 @@ docker-compose up -d --build
 - Frontend : http://localhost:5173
 - Backend API : http://localhost:8000
 - Documentation API : http://localhost:8000/docs
+- Grafana : http://localhost:3000 (admin/admin)
+- InfluxDB : http://localhost:8086
 
-### Développement local
+### Production
 
-**Backend :**
+```bash
+# Utiliser la configuration de production
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# Ou avec des variables d'environnement
+cp .env.example .env
+# Éditer .env avec vos valeurs de production
+docker-compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+### Développement
+
+**Avec Docker (recommandé) :**
+```bash
+# Développement avec hot-reload
+docker-compose -f docker-compose.yml -f docker-compose.override.yml up --build
+```
+
+**Backend local :**
 ```powershell
 cd backend
 python -m venv venv

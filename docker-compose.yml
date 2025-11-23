@@ -1,61 +1,136 @@
 version: "3.8"
+
 services:
   postgres:
     image: postgres:15
+    container_name: siac-postgres
     environment:
       - POSTGRES_DB=siac_db
       - POSTGRES_USER=siac
       - POSTGRES_PASSWORD=password
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
       - "5432:5432"
+    networks:
+      - siac-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U siac -d siac_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
   backend:
     build: ./backend
+    container_name: siac-backend
     ports:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql://siac:password@postgres:5432/siac_db
+      - MQTT_BROKER=mosquitto
+      - MQTT_PORT=1883
+      - INFLUXDB_URL=http://influxdb:8086
       - PYTHONUNBUFFERED=1
+      - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://frontend:80
     depends_on:
-      - postgres
-      - mosquitto
-      - influxdb
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+      influxdb:
+        condition: service_started
+    networks:
+      - siac-network
+    volumes:
+      - ./backend/model_isolation_forest.pkl:/app/model_isolation_forest.pkl
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import requests; requests.get('http://localhost:8000/api/v1/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
   mosquitto:
     image: eclipse-mosquitto:2.0
+    container_name: siac-mosquitto
     ports:
       - "1883:1883"
     volumes:
       - ./infra/mosquitto/config:/mosquitto/config:ro
+      - mosquitto_data:/mosquitto/data
+    networks:
+      - siac-network
+    restart: unless-stopped
 
   influxdb:
     image: influxdb:2.8
+    container_name: siac-influxdb
     ports:
       - "8086:8086"
     environment:
       - INFLUXDB_HTTP_BIND_ADDRESS=:8086
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password
+      - DOCKER_INFLUXDB_INIT_ORG=siac
+      - DOCKER_INFLUXDB_INIT_BUCKET=siac_metrics
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=siac-token
     volumes:
       - influxdb_data:/var/lib/influxdb
+    networks:
+      - siac-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
   grafana:
-    image: grafana/grafana
+    image: grafana/grafana:10.2.0
+    container_name: siac-grafana
     ports:
       - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=password
+      - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - siac-network
+    depends_on:
+      - influxdb
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
+    container_name: siac-frontend
     ports:
       - "80:80"
     environment:
       - VITE_API_URL=http://backend:8000
     depends_on:
       - backend
+    networks:
+      - siac-network
+    restart: unless-stopped
+
+networks:
+  siac-network:
+    driver: bridge
 
 volumes:
   postgres_data:
   influxdb_data:
   grafana_data:
+  mosquitto_data:
