@@ -1,6 +1,6 @@
 # SIAC-IoT — Plateforme de surveillance IoT
 
-Plateforme moderne de surveillance IoT avec détection d'anomalies par Machine Learning et interface de gestion en temps réel.
+Plateforme moderne de surveillance IoT avec détection d'anomalies par Machine Learning, sécurité réseau avec Suricata, et interface de gestion en temps réel.
 
 ## 🌐 Application déployée
 
@@ -21,19 +21,23 @@ Plateforme moderne de surveillance IoT avec détection d'anomalies par Machine L
 ### Backend (FastAPI)
 - **API REST** complète pour la gestion des dispositifs IoT
 - **Détection d'anomalies ML** avec IsolationForest (scikit-learn)
-- **Ingestion de télémétrie** en temps réel
+- **Sécurité réseau** avec intégration Suricata (logs et alertes)
+- **Ingestion de télémétrie** en temps réel (ESP32 sensors)
 - **Système d'alertes** automatique avec recommandations
 - **Authentification JWT** avec gestion des rôles (admin/user)
-- **Base de données SQLite** avec SQLAlchemy ORM
+- **Base de données PostgreSQL** avec SQLAlchemy ORM
+- **Export de données** (Excel/PDF) pour rapports
+- **MQTT Broker** intégré pour communication IoT
 
 ### Frontend (React + Vite)
-- **Dashboard interactif** avec statistiques en temps réel
+- **Dashboard 3 catégories** : IoT Monitoring, IDS Alerts, Security Logs
 - **Visualisations Recharts** (graphiques, courbes, barres)
 - **Gestion des dispositifs** (CRUD complet)
 - **Système d'alertes** avec filtres et recherche
 - **Interface admin** pour la gestion des utilisateurs
 - **Design moderne** avec Tailwind CSS et Lucide Icons
 - **Animations** avec fond animé et effets glassmorphism
+- **Export de données** en temps réel
 
 ### Machine Learning
 - **Feature Engineering** : extraction de 7 caractéristiques depuis la télémétrie
@@ -41,6 +45,13 @@ Plateforme moderne de surveillance IoT avec détection d'anomalies par Machine L
 - **Entraînement automatique** sur données normales simulées
 - **Persistance du modèle** avec pickle
 - **API de statut** : visualisation de l'état du modèle en temps réel
+
+### Sécurité & Monitoring
+- **Suricata IDS** : détection d'intrusions réseau
+- **Headers de sécurité** (CSP, HSTS, X-Frame-Options)
+- **InfluxDB + Grafana** : métriques et visualisation avancée
+- **MQTT Mosquitto** : communication sécurisée IoT
+- **Health checks** automatiques pour tous les services
 
 ## 📦 Structure du projet
 
@@ -54,16 +65,31 @@ SIAC-IoT/
 │   │   ├── ml_service.py        # Service ML (IsolationForest)
 │   │   └── feature_engineering.py # Extraction de features
 │   ├── Dockerfile
+│   ├── .dockerignore
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/               # Dashboard, Devices, Alerts, Admin, Login
+│   │   ├── pages/               # IoT Monitoring, IDS Alerts, Logs, Admin
 │   │   ├── components/          # Composants réutilisables
 │   │   ├── contexts/            # AuthContext
 │   │   └── lib/                 # API client, utils
 │   ├── Dockerfile
+│   ├── nginx.conf               # Configuration Nginx production
 │   └── package.json
-└── docker-compose.yml
+├── infra/
+│   ├── postgres/
+│   │   └── init.sql             # Schéma DB et données initiales
+│   ├── mosquitto/
+│   │   └── config/
+│   │       └── mosquitto.conf   # Configuration MQTT broker
+│   └── grafana/
+│       └── provisioning/
+│           ├── datasources/     # Configuration InfluxDB datasource
+│           └── dashboards/      # Configuration dashboards
+├── docker-compose.yml           # Configuration principale
+├── docker-compose.override.yml  # Développement (hot-reload)
+├── docker-compose.prod.yml      # Production (optimisé)
+└── .env.example                 # Variables d'environnement
 
 ```
 
@@ -115,20 +141,20 @@ cd SIAC-IoT
 docker-compose up -d --build
 ```
 
-**URLs :**
-- Frontend : http://localhost:5173
-- Backend API : http://localhost:8000
-- Documentation API : http://localhost:8000/docs
-- Grafana : http://localhost:3000 (admin/admin)
-- InfluxDB : http://localhost:8086
+**URLs d'accès :**
+- **Frontend** : http://localhost:80 (production) / http://localhost:5173 (développement)
+- **Backend API** : http://localhost:8000
+- **Documentation API** : http://localhost:8000/docs
+- **Grafana** : http://localhost:3000 (admin/admin)
+- **InfluxDB** : http://localhost:8086
 
 ### Production
 
 ```bash
-# Utiliser la configuration de production
+# Configuration de production optimisée
 docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
-# Ou avec des variables d'environnement
+# Avec variables d'environnement personnalisées
 cp .env.example .env
 # Éditer .env avec vos valeurs de production
 docker-compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml up -d --build
@@ -138,8 +164,30 @@ docker-compose --env-file .env -f docker-compose.yml -f docker-compose.prod.yml 
 
 **Avec Docker (recommandé) :**
 ```bash
-# Développement avec hot-reload
+# Développement avec hot-reload automatique
 docker-compose -f docker-compose.yml -f docker-compose.override.yml up --build
+```
+
+**Dépannage :**
+
+```bash
+# Vérifier l'état des services
+docker-compose ps
+
+# Voir les logs d'un service
+docker-compose logs backend
+docker-compose logs frontend
+docker-compose logs postgres
+
+# Redémarrer un service
+docker-compose restart backend
+
+# Nettoyer les volumes (⚠️ supprime les données)
+docker-compose down -v
+docker-compose up -d --build
+
+# Construire sans cache
+docker-compose build --no-cache
 ```
 
 **Backend local :**
@@ -180,8 +228,22 @@ Le modèle IsolationForest est entraîné automatiquement au démarrage du backe
 - Jour de la semaine
 
 **API ML :**
-- `GET /api/v1/ml/status` : Statut du modèle
-- `GET /api/v1/alerts/recommendations` : Recommandations basées sur les alertes
+- `GET /api/v1/ml/status` : Statut du modèle IsolationForest
+- `POST /api/v1/ml/train` : Réentraînement manuel du modèle
+
+**Suricata IDS :**
+- `POST /api/v1/suricata/logs` : Ingestion des logs Suricata
+- `GET /api/v1/suricata/logs` : Récupération des logs avec filtres
+- `GET /api/v1/suricata/stats` : Statistiques des alertes par catégorie
+- `GET /api/v1/suricata/alerts` : Alertes de sécurité actives
+
+**Export de données :**
+- `GET /api/v1/export/telemetry/excel` : Export télémétrie Excel
+- `GET /api/v1/export/telemetry/pdf` : Export télémétrie PDF
+- `GET /api/v1/export/alerts/excel` : Export alertes Excel
+- `GET /api/v1/export/alerts/pdf` : Export alertes PDF
+- `GET /api/v1/export/suricata/excel` : Export logs Suricata Excel
+- `GET /api/v1/export/suricata/pdf` : Export logs Suricata PDF
 
 ## 📊 API Endpoints
 
@@ -192,11 +254,12 @@ Le modèle IsolationForest est entraîné automatiquement au démarrage du backe
 - `DELETE /api/v1/devices/{id}` : Supprimer un dispositif
 
 **Telemetry :**
-- `POST /api/v1/telemetry` : Ingérer des données de télémétrie
+- `POST /api/v1/telemetry` : Ingérer des données de télémétrie (ESP32)
+- `GET /api/v1/telemetry/recent` : Données récentes par device
 
 **Alerts :**
-- `GET /api/v1/alerts` : Liste des alertes
-- `GET /api/v1/alerts/recommendations` : Recommandations
+- `GET /api/v1/alerts` : Liste des alertes ML
+- `GET /api/v1/alerts/recommendations` : Recommandations basées sur les alertes
 
 **Dashboard :**
 - `GET /api/v1/dashboard_summary` : Statistiques globales
@@ -206,25 +269,47 @@ Le modèle IsolationForest est entraîné automatiquement au démarrage du backe
 **Auth :**
 - `POST /api/v1/auth/login` : Connexion
 - `GET /api/v1/users/me` : Profil utilisateur
+- `GET /api/v1/users` : Liste des utilisateurs (admin)
+- `POST /api/v1/users` : Créer un utilisateur (admin)
+
+**Santé système :**
+- `GET /api/v1/health` : État de santé du système
 
 ## 🎨 Technologies utilisées
 
 **Backend :**
-- FastAPI 0.115.12
-- SQLAlchemy 2.0.44
-- scikit-learn 1.5.2
-- Pydantic v2
+- FastAPI 0.115.5
+- PostgreSQL 15 (production) / SQLite (développement)
+- SQLAlchemy 2.0.35
+- scikit-learn 1.7.2 (IsolationForest)
+- Pydantic 2.8.2
 - python-jose (JWT)
 - passlib (hashing)
+- pandas/reportlab (exports Excel/PDF)
 
 **Frontend :**
-- React 18
-- Vite
-- Tailwind CSS
-- Recharts
+- React 18 + Vite
+- Tailwind CSS + PostCSS
+- Recharts (visualisations)
 - Lucide React Icons
-- React Router DOM
+- React Router DOM v6
 - React Hot Toast
+- Nginx (production)
+
+**Infrastructure :**
+- Docker & Docker Compose
+- PostgreSQL (base de données)
+- Mosquitto (MQTT broker)
+- InfluxDB 2.7 (métriques séries temporelles)
+- Grafana 10.2.0 (visualisation monitoring)
+- Nginx (reverse proxy & sécurité)
+
+**Sécurité :**
+- Suricata IDS (détection intrusions)
+- Headers de sécurité (CSP, HSTS, etc.)
+- Authentification JWT
+- Gestion des rôles (admin/user)
+- Health checks automatiques
 
 ## 📝 Licence
 
@@ -233,4 +318,4 @@ MIT License
 ---
 
 **Développé par** : Manitriniaina2002  
-**Dernière mise à jour** : 14 novembre 2025
+**Dernière mise à jour** : 23 novembre 2025
