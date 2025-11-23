@@ -2,13 +2,16 @@ import React, { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import toast from 'react-hot-toast'
-import { Home, Wifi, Bell, Settings, LogOut, Menu, X, User, Shield } from 'lucide-react'
+import { Home, Wifi, Bell, Settings, LogOut, Menu, X, User, Shield, Activity, Server, FileText } from 'lucide-react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Devices from './pages/Devices'
 import Alerts from './pages/Alerts'
+import IoTMonitoring from './pages/IoTMonitoring'
+import IDSAlerts from './pages/IDSAlerts'
+import Logs from './pages/Logs'
 import Admin from './pages/Admin'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog'
@@ -42,8 +45,11 @@ function Sidebar() {
 
   const navItems = [
     { path: '/dashboard', label: 'Dashboard', icon: Home },
-    { path: '/devices', label: 'Appareils', icon: Wifi },
-    { path: '/alerts', label: 'Alertes', icon: Bell },
+    { path: '/iot-monitoring', label: 'Monitoring IoT', icon: Activity },
+    { path: '/ids-alerts', label: 'Alertes IDS', icon: Shield },
+    { path: '/logs', label: 'Logs', icon: FileText },
+    { path: '/devices', label: 'Appareils', icon: Server },
+    { path: '/alerts', label: 'Alertes ML', icon: Bell },
     { path: '/admin', label: 'Administration', icon: Settings },
   ]
   
@@ -160,7 +166,7 @@ function Sidebar() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider>
         <Toaster 
           position="top-right"
@@ -242,6 +248,39 @@ export default function App() {
                 <Sidebar />
                 <div className="main-content">
                   <Admin />
+                </div>
+              </div>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/iot-monitoring" element={
+            <ProtectedRoute>
+              <div className="app-container">
+                <Sidebar />
+                <div className="main-content">
+                  <IoTMonitoring />
+                </div>
+              </div>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/ids-alerts" element={
+            <ProtectedRoute>
+              <div className="app-container">
+                <Sidebar />
+                <div className="main-content">
+                  <IDSAlerts />
+                </div>
+              </div>
+            </ProtectedRoute>
+          } />
+          
+          <Route path="/logs" element={
+            <ProtectedRoute>
+              <div className="app-container">
+                <Sidebar />
+                <div className="main-content">
+                  <Logs />
                 </div>
               </div>
             </ProtectedRoute>

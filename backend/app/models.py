@@ -3,7 +3,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 # SQLAlchemy ORM (for SQLite persistence)
-from sqlalchemy import Column, String, DateTime, JSON, Integer, Boolean, Float
+from sqlalchemy import Column, String, DateTime, JSON, Integer, Boolean, Float, BigInteger
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -54,6 +54,11 @@ class DeviceUpdate(BaseModel):
 class TelemetrySensors(BaseModel):
     temperature: Optional[float]
     humidity: Optional[float]
+    distance: Optional[float]  # Ultrasonic distance
+    motion: Optional[bool]    # PIR motion detection
+    rfid_uid: Optional[str]   # RFID UID scanned
+    servo_state: Optional[str]  # Servo state (e.g., "open", "closed")
+    led_states: Optional[Dict[str, bool]]  # LED states (e.g., {"red": true, "green": false})
 
 
 class TelemetryNet(BaseModel):
@@ -141,6 +146,11 @@ class TelemetryORM(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, index=True)
     temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     humidity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    distance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    motion: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    rfid_uid: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    servo_state: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    led_states: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     tx_bytes: Mapped[int] = mapped_column(Integer, default=0)
     rx_bytes: Mapped[int] = mapped_column(Integer, default=0)
     connections: Mapped[int] = mapped_column(Integer, default=0)
@@ -158,4 +168,40 @@ class AlertORM(Base):
     reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
     meta: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+
+class SuricataLog(BaseModel):
+    id: Optional[int] = None
+    event_ts: Optional[datetime] = None
+    event_type: Optional[str] = None
+    src_ip: Optional[str] = None
+    src_port: Optional[str] = None
+    dest_ip: Optional[str] = None
+    dest_port: Optional[str] = None
+    proto: Optional[str] = None
+    signature: Optional[str] = None
+    signature_id: Optional[str] = None
+    severity: Optional[str] = None
+    raw: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SuricataLogORM(Base):
+    __tablename__ = "suricata_alerts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    event_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    event_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    src_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    src_port: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    dest_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    dest_port: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    proto: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    signature: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    signature_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    severity: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    raw: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
 

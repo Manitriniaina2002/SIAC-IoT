@@ -11,6 +11,8 @@ from .models import (
     UserORM,
     TelemetryORM,
     AlertORM,
+    SuricataLog,
+    SuricataLogORM,
     User,
     UserCreate,
     UserUpdate,
@@ -83,6 +85,26 @@ def on_startup():
                 if not result:
                     db.execute(text("ALTER TABLE devices ADD COLUMN location VARCHAR(255)"))
                     db.commit()
+                
+                # Check for new telemetry columns
+                telemetry_cols = ['distance', 'motion', 'rfid_uid', 'servo_state', 'led_states']
+                for col in telemetry_cols:
+                    result = db.execute(text(f"""
+                        SELECT column_name FROM information_schema.columns 
+                        WHERE table_name='telemetry' AND column_name='{col}'
+                    """)).fetchone()
+                    if not result:
+                        if col == 'distance':
+                            db.execute(text("ALTER TABLE telemetry ADD COLUMN distance FLOAT"))
+                        elif col == 'motion':
+                            db.execute(text("ALTER TABLE telemetry ADD COLUMN motion BOOLEAN"))
+                        elif col == 'rfid_uid':
+                            db.execute(text("ALTER TABLE telemetry ADD COLUMN rfid_uid VARCHAR(255)"))
+                        elif col == 'servo_state':
+                            db.execute(text("ALTER TABLE telemetry ADD COLUMN servo_state VARCHAR(100)"))
+                        elif col == 'led_states':
+                            db.execute(text("ALTER TABLE telemetry ADD COLUMN led_states JSON"))
+                        db.commit()
             else:
                 # SQLite: Use PRAGMA
                 cols = db.execute(text("PRAGMA table_info(users)")).fetchall()
@@ -99,6 +121,21 @@ def on_startup():
                 if "location" not in col_names:
                     db.execute(text("ALTER TABLE devices ADD COLUMN location VARCHAR(255)"))
                     db.commit()
+                
+                # Check for new telemetry columns
+                cols = db.execute(text("PRAGMA table_info(telemetry)")).fetchall()
+                col_names = {row[1] for row in cols}
+                new_telemetry_cols = {
+                    "distance": "REAL",
+                    "motion": "BOOLEAN",
+                    "rfid_uid": "VARCHAR(255)",
+                    "servo_state": "VARCHAR(100)",
+                    "led_states": "JSON"
+                }
+                for col, col_type in new_telemetry_cols.items():
+                    if col not in col_names:
+                        db.execute(text(f"ALTER TABLE telemetry ADD COLUMN {col} {col_type}"))
+                        db.commit()
         except Exception as e:
             db.rollback()
             print(f"Migration error (non-critical): {e}")
@@ -296,6 +333,11 @@ def delete_device(device_id: str, db: Session = Depends(get_db)):
 def ingest_telemetry(t: Telemetry, db: Session = Depends(get_db)):
     temp = t.sensors.temperature if t.sensors and t.sensors.temperature is not None else None
     hum = t.sensors.humidity if t.sensors and t.sensors.humidity is not None else None
+    dist = t.sensors.distance if t.sensors and t.sensors.distance is not None else None
+    motion = t.sensors.motion if t.sensors and t.sensors.motion is not None else None
+    rfid = t.sensors.rfid_uid if t.sensors and t.sensors.rfid_uid is not None else None
+    servo = t.sensors.servo_state if t.sensors and t.sensors.servo_state is not None else None
+    leds = t.sensors.led_states if t.sensors and t.sensors.led_states is not None else None
     tx = t.net.tx_bytes if t.net and t.net.tx_bytes is not None else 0
     rx = t.net.rx_bytes if t.net and t.net.rx_bytes is not None else 0
     conns = t.net.connections if t.net and t.net.connections is not None else 0
@@ -305,6 +347,11 @@ def ingest_telemetry(t: Telemetry, db: Session = Depends(get_db)):
         ts=t.ts or datetime.utcnow(),
         temperature=temp,
         humidity=hum,
+        distance=dist,
+        motion=motion,
+        rfid_uid=rfid,
+        servo_state=servo,
+        led_states=leds,
         tx_bytes=tx,
         rx_bytes=rx,
         connections=conns,
@@ -321,6 +368,11 @@ def ingest_telemetry(t: Telemetry, db: Session = Depends(get_db)):
         payload = {
             'temperature': temp,
             'humidity': hum,
+            'distance': dist,
+            'motion': motion,
+            'rfid_uid': rfid,
+            'servo_state': servo,
+            'led_states': leds,
             'tx_bytes': tx,
             'rx_bytes': rx,
             'connections': conns,
@@ -551,6 +603,39 @@ def train_ml_model(n_samples: int = 1000):
         raise HTTPException(status_code=500, detail="Training failed")
 
 
+@app.get("/api/v1/telemetry/recent")
+def recent_telemetry(limit: int = 20, db: Session = Depends(get_db)):
+    rows = (
+        db.query(TelemetryORM)
+        .order_by(TelemetryORM.ts.desc())
+        .limit(max(1, min(limit, 100)))
+        .all()
+    )
+    # Convert to dict format for frontend
+    result = []
+    for row in rows:
+        item = {
+            "device_id": row.device_id,
+            "ts": row.ts.isoformat(),
+            "sensors": {
+                "temperature": row.temperature,
+                "humidity": row.humidity,
+                "distance": row.distance,
+                "motion": row.motion,
+                "rfid_uid": row.rfid_uid,
+                "servo_state": row.servo_state,
+                "led_states": row.led_states,
+            },
+            "net": {
+                "tx_bytes": row.tx_bytes,
+                "rx_bytes": row.rx_bytes,
+                "connections": row.connections,
+            }
+        }
+        result.append(item)
+    return result
+
+
 @app.get("/api/v1/metrics/devices_activity_24h")
 def devices_activity_24h(db: Session = Depends(get_db)):
     now = datetime.utcnow()
@@ -621,6 +706,100 @@ def data_volume_7d(db: Session = Depends(get_db)):
             "volume": vol_gb,
         })
     return out
+
+
+# Suricata Security Logs Endpoints
+@app.post("/api/v1/suricata/logs", status_code=202)
+def ingest_suricata_log(log: SuricataLog, db: Session = Depends(get_db)):
+    # For now, just insert the log without aggregation since the new schema doesn't have occurrences
+    row = SuricataLogORM(
+        event_ts=log.event_ts,
+        event_type=log.event_type,
+        src_ip=log.src_ip,
+        src_port=log.src_port,
+        dest_ip=log.dest_ip,
+        dest_port=log.dest_port,
+        proto=log.proto,
+        signature=log.signature,
+        signature_id=log.signature_id,
+        severity=log.severity,
+        raw=log.raw,
+    )
+    db.add(row)
+    db.commit()
+    return {"status": "created"}
+
+
+@app.get("/api/v1/suricata/logs/recent")
+def get_recent_suricata_logs(limit: int = 20, db: Session = Depends(get_db)):
+    rows = (
+        db.query(SuricataLogORM)
+        .order_by(SuricataLogORM.event_ts.desc())
+        .limit(max(1, min(limit, 100)))
+        .all()
+    )
+    return rows
+
+
+@app.get("/api/v1/suricata/logs/stats")
+def get_suricata_stats(db: Session = Depends(get_db)):
+    now = datetime.utcnow()
+    last24 = now - timedelta(hours=24)
+    
+    total_logs = db.query(SuricataLogORM).count()
+    logs_24h = db.query(SuricataLogORM).filter(SuricataLogORM.event_ts >= last24).count()
+    
+    # Derive categories from signatures (simplified logic)
+    def categorize_signature(signature):
+        if not signature:
+            return 'unknown'
+        sig_lower = signature.lower()
+        if 'mqtt' in sig_lower and 'tls' in sig_lower:
+            return 'mqtt_no_tls'
+        elif 'brute' in sig_lower or 'admin' in sig_lower:
+            return 'brute_force'
+        elif 'scan' in sig_lower or 'nmap' in sig_lower:
+            return 'network_scan'
+        elif 'dos' in sig_lower or 'flood' in sig_lower:
+            return 'dos'
+        elif 'tls' in sig_lower:
+            return 'tls_error'
+        elif 'docker' in sig_lower or '172.17' in sig_lower:
+            return 'intrusion'
+        else:
+            return 'other'
+    
+    # Get all logs from last 24h and categorize them
+    recent_logs = db.query(SuricataLogORM).filter(SuricataLogORM.event_ts >= last24).all()
+    categories = {}
+    severities = {}
+    
+    for log in recent_logs:
+        cat = categorize_signature(log.signature)
+        categories[cat] = categories.get(cat, 0) + 1
+        
+        sev = log.severity or '3'
+        severities[sev] = severities.get(sev, 0) + 1
+    
+    return {
+        "total_logs": total_logs,
+        "logs_24h": logs_24h,
+        "categories": categories,
+        "severities": severities,
+    }
+
+
+@app.get("/api/v1/suricata/logs/alerts")
+def get_suricata_alerts(db: Session = Depends(get_db)):
+    # Return high-priority security alerts (severity '1' and '2')
+    rows = (
+        db.query(SuricataLogORM)
+        .filter(SuricataLogORM.severity.in_(['1', '2']))
+        .order_by(SuricataLogORM.event_ts.desc())
+        .limit(50)
+        .all()
+    )
+    return rows
 
 
 def maybe_send_email_alert(alert: AlertORM):

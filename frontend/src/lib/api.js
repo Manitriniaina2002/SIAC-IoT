@@ -1,5 +1,5 @@
 import toast from 'react-hot-toast'
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8888'
 
 function getToken() {
   try {
@@ -69,4 +69,11 @@ export const api = {
   getModelStatus: () => request('/api/v1/ml/status'),
   trainModel: (nSamples = 1000) => request('/api/v1/ml/train', { method: 'POST', body: { n_samples: nSamples } }),
   getRecommendations: () => request('/api/v1/alerts/recommendations'),
+  // IoT Telemetry
+  getRecentTelemetry: (limit = 20) => request(`/api/v1/telemetry/recent?limit=${encodeURIComponent(limit)}`),
+  // Suricata endpoints
+  sendSuricataLog: (payload) => request('/api/v1/suricata/logs', { method: 'POST', body: payload }),
+  getRecentSuricataLogs: (limit = 20) => request(`/api/v1/suricata/logs/recent?limit=${encodeURIComponent(limit)}`),
+  getSuricataStats: () => request('/api/v1/suricata/logs/stats'),
+  getSuricataAlerts: () => request('/api/v1/suricata/logs/alerts'),
 }
