@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 from .models import (
     AuthRequest,
     AuthResponse,
@@ -27,9 +29,27 @@ from datetime import datetime, timedelta
 from passlib.context import CryptContext
 import math
 import os
-import smtplib
-from email.mime.text import MIMEText
-from .ml_service import anomaly_service
+import pandas as pd
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
+from reportlab.lib import colors
+import io
+
+try:
+    from .ml_service import anomaly_service
+except ImportError:
+    anomaly_service = None
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
 
 app = FastAPI(title="SIAC-IoT Backend")
 
@@ -42,6 +62,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.on_event("startup")
@@ -181,8 +204,11 @@ def on_startup():
         db.close()
     
     # Entraîner le modèle ML si pas déjà entraîné
-    if anomaly_service.model_status == "pending":
-        anomaly_service.train_on_simulated_data(n_samples=1000)
+    try:
+        if anomaly_service and anomaly_service.model_status == "pending":
+            anomaly_service.train_on_simulated_data(n_samples=1000)
+    except Exception as e:
+        print(f"Warning: ML service initialization failed: {e}")
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -362,7 +388,7 @@ def ingest_telemetry(t: Telemetry, db: Session = Depends(get_db)):
     # Try ML model prediction first
     is_anomaly = False
     model_used = False
-    model_status = getattr(anomaly_service, 'model_status', 'pending')
+    model_status = getattr(anomaly_service, 'model_status', 'unavailable') if anomaly_service else 'unavailable'
     
     try:
         payload = {
@@ -378,10 +404,14 @@ def ingest_telemetry(t: Telemetry, db: Session = Depends(get_db)):
             'connections': conns,
             'ts': (t.ts or datetime.utcnow()).isoformat(),
         }
-        pred_is_anom, anom_score, status = anomaly_service.predict_anomaly(payload)
         
-        if status == 'trained':
-            model_used = True
+        # Try ML model prediction
+        if anomaly_service:
+            pred_is_anom, anom_score, status = anomaly_service.predict_anomaly(payload)
+            if status == 'trained':
+                model_used = True
+        else:
+            pred_is_anom, anom_score, status = False, 0.0, "unavailable"
             if pred_is_anom:
                 is_anomaly = True
                 alert = AlertORM(
@@ -587,8 +617,14 @@ def get_ml_status():
     """
     Retourne le statut du modèle ML.
     """
-    status = anomaly_service.get_status()
-    return status
+    try:
+        if anomaly_service:
+            status = anomaly_service.get_status()
+            return status
+        else:
+            return {"status": "error", "message": "ML service not available"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.post("/api/v1/ml/train")
@@ -596,11 +632,17 @@ def train_ml_model(n_samples: int = 1000):
     """
     Force l'entraînement du modèle ML (pour admin).
     """
-    success = anomaly_service.train_on_simulated_data(n_samples=n_samples)
-    if success:
-        return {"status": "success", "message": f"Model trained with {n_samples} samples"}
-    else:
-        raise HTTPException(status_code=500, detail="Training failed")
+    try:
+        if not anomaly_service:
+            raise HTTPException(status_code=503, detail="ML service not available")
+        
+        success = anomaly_service.train_on_simulated_data(n_samples=n_samples)
+        if success:
+            return {"status": "success", "message": f"Model trained with {n_samples} samples"}
+        else:
+            raise HTTPException(status_code=500, detail="Training failed")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/v1/telemetry/recent")
@@ -800,6 +842,162 @@ def get_suricata_alerts(db: Session = Depends(get_db)):
         .all()
     )
     return rows
+
+
+# Export endpoints
+@app.get("/api/v1/telemetry/export")
+async def export_telemetry(format: str = "excel", db: Session = Depends(get_db)):
+    telemetries = db.query(TelemetryORM).all()
+    data = [
+        {
+            "id": t.id,
+            "device_id": t.device_id,
+            "ts": t.ts,
+            "temperature": t.temperature,
+            "humidity": t.humidity,
+            "distance": t.distance,
+            "motion": t.motion,
+            "rfid_uid": t.rfid_uid,
+            "servo_state": t.servo_state,
+            "led_states": str(t.led_states),
+            "tx_bytes": t.tx_bytes,
+            "rx_bytes": t.rx_bytes,
+            "connections": t.connections
+        } for t in telemetries
+    ]
+    
+    if format == "excel":
+        df = pd.DataFrame(data)
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False, engine='openpyxl')
+        buffer.seek(0)
+        return FileResponse(buffer, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename='telemetry.xlsx')
+    elif format == "pdf":
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        elements = []
+        table_data = [["ID", "Device ID", "Timestamp", "Temp", "Humidity", "Distance", "Motion", "RFID", "Servo", "LEDs", "TX", "RX", "Connections"]]
+        for d in data:
+            table_data.append([d["id"], d["device_id"], str(d["ts"]), d["temperature"], d["humidity"], d["distance"], d["motion"], d["rfid_uid"], d["servo_state"], d["led_states"], d["tx_bytes"], d["rx_bytes"], d["connections"]])
+        table = Table(table_data)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 14),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        elements.append(table)
+        doc.build(elements)
+        buffer.seek(0)
+        return FileResponse(buffer, media_type='application/pdf', filename='telemetry.pdf')
+    else:
+        raise HTTPException(status_code=400, detail="Invalid format. Use 'excel' or 'pdf'")
+
+
+@app.get("/api/v1/alerts/export")
+async def export_alerts(format: str = "excel", db: Session = Depends(get_db)):
+    alerts = db.query(AlertORM).all()
+    data = [
+        {
+            "id": a.id,
+            "alert_id": a.alert_id,
+            "device_id": a.device_id,
+            "ts": a.ts,
+            "severity": a.severity,
+            "score": a.score,
+            "reason": a.reason,
+            "acknowledged": a.acknowledged,
+            "meta": str(a.meta)
+        } for a in alerts
+    ]
+    
+    if format == "excel":
+        df = pd.DataFrame(data)
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False, engine='openpyxl')
+        buffer.seek(0)
+        return FileResponse(buffer, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename='alerts.xlsx')
+    elif format == "pdf":
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        elements = []
+        table_data = [["ID", "Alert ID", "Device ID", "Timestamp", "Severity", "Score", "Reason", "Acknowledged", "Meta"]]
+        for d in data:
+            table_data.append([d["id"], d["alert_id"], d["device_id"], str(d["ts"]), d["severity"], d["score"], d["reason"], d["acknowledged"], d["meta"]])
+        table = Table(table_data)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 14),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        elements.append(table)
+        doc.build(elements)
+        buffer.seek(0)
+        return FileResponse(buffer, media_type='application/pdf', filename='alerts.pdf')
+    else:
+        raise HTTPException(status_code=400, detail="Invalid format. Use 'excel' or 'pdf'")
+
+
+@app.get("/api/v1/logs/export")
+async def export_logs(format: str = "excel", db: Session = Depends(get_db)):
+    logs = db.query(SuricataLogORM).all()
+    data = [
+        {
+            "id": l.id,
+            "event_ts": l.event_ts,
+            "event_type": l.event_type,
+            "src_ip": l.src_ip,
+            "src_port": l.src_port,
+            "dest_ip": l.dest_ip,
+            "dest_port": l.dest_port,
+            "proto": l.proto,
+            "signature": l.signature,
+            "signature_id": l.signature_id,
+            "severity": l.severity,
+            "raw": str(l.raw),
+            "created_at": l.created_at
+        } for l in logs
+    ]
+    
+    if format == "excel":
+        df = pd.DataFrame(data)
+        buffer = io.BytesIO()
+        df.to_excel(buffer, index=False, engine='openpyxl')
+        buffer.seek(0)
+        return FileResponse(buffer, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename='logs.xlsx')
+    elif format == "pdf":
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        elements = []
+        table_data = [["ID", "Event TS", "Event Type", "Src IP", "Src Port", "Dest IP", "Dest Port", "Proto", "Signature", "Sig ID", "Severity", "Raw", "Created At"]]
+        for d in data:
+            table_data.append([d["id"], str(d["event_ts"]), d["event_type"], d["src_ip"], d["src_port"], d["dest_ip"], d["dest_port"], d["proto"], d["signature"], d["signature_id"], d["severity"], d["raw"], str(d["created_at"])])
+        table = Table(table_data)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 14),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        elements.append(table)
+        doc.build(elements)
+        buffer.seek(0)
+        return FileResponse(buffer, media_type='application/pdf', filename='logs.pdf')
+    else:
+        raise HTTPException(status_code=400, detail="Invalid format. Use 'excel' or 'pdf'")
 
 
 def maybe_send_email_alert(alert: AlertORM):

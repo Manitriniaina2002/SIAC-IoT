@@ -5,6 +5,8 @@ import { StatCard, ContentCard } from '@/components/cards'
 import { PageHeader } from '@/components/layout'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { api } from '@/lib/api'
+import { BASE_URL } from '@/lib/api'
+import { Button } from '@/components/ui/button'
 
 export default function Logs() {
   const [suricataLogs, setSuricataLogs] = useState([])
@@ -27,6 +29,34 @@ export default function Logs() {
     } catch (e) {
       setBackendConnected(false)
       console.error('Failed to load logs data:', e)
+    }
+  }
+
+  const handleExport = async (format) => {
+    const url = `${BASE_URL}/api/v1/logs/export?format=${format}`;
+    const token = api.getToken();
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: token ? `Bearer ${token}` : undefined,
+        },
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `logs.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(downloadUrl);
+        document.body.removeChild(a);
+        toast.success(`Logs exported as ${format.toUpperCase()}`);
+      } else {
+        toast.error('Export failed');
+      }
+    } catch (error) {
+      toast.error('Export failed');
     }
   }
 
@@ -168,6 +198,20 @@ export default function Logs() {
               <Download className="w-4 h-4" />
               Exporter CSV
             </button>
+            <Button 
+              onClick={() => handleExport('excel')} 
+              className="bg-green-600 hover:bg-green-700 shadow-lg font-semibold px-4 py-2 flex items-center gap-2"
+            >
+              <FileText className="w-4 h-4" />
+              Export Excel
+            </Button>
+            <Button 
+              onClick={() => handleExport('pdf')} 
+              className="bg-red-600 hover:bg-red-700 shadow-lg font-semibold px-4 py-2 flex items-center gap-2"
+            >
+              <FileText className="w-4 h-4" />
+              Export PDF
+            </Button>
             <button 
               onClick={loadLogsData} 
               className="bg-gray-600 hover:bg-gray-700 text-white shadow-lg font-semibold px-4 py-2 flex items-center gap-2 rounded-lg"

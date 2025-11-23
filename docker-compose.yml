@@ -1,12 +1,25 @@
 version: "3.8"
 services:
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=siac_db
+      - POSTGRES_USER=siac
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
   backend:
     build: ./backend
     ports:
       - "8000:8000"
     environment:
+      - DATABASE_URL=postgresql://siac:password@postgres:5432/siac_db
       - PYTHONUNBUFFERED=1
     depends_on:
+      - postgres
       - mosquitto
       - influxdb
 
@@ -23,17 +36,26 @@ services:
       - "8086:8086"
     environment:
       - INFLUXDB_HTTP_BIND_ADDRESS=:8086
+    volumes:
+      - influxdb_data:/var/lib/influxdb
 
   grafana:
     image: grafana/grafana
     ports:
       - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
 
   frontend:
     build: ./frontend
     ports:
-      - "5173:5173"
+      - "80:80"
     environment:
-      - CHOKIDAR_USEPOLLING=true
+      - VITE_API_URL=http://backend:8000
     depends_on:
       - backend
+
+volumes:
+  postgres_data:
+  influxdb_data:
+  grafana_data:

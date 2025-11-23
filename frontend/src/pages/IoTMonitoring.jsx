@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
-import { Activity, TrendingUp, AlertTriangle, Database, Wifi, CheckCircle, Zap, ArrowUpRight, BarChart3, LineChart, RefreshCw, Brain, Calendar, Sparkles, HardDrive, TrendingDown, Eye, EyeOff, Radio, Cpu } from 'lucide-react'
+import { Activity, TrendingUp, AlertTriangle, Database, Wifi, CheckCircle, Zap, ArrowUpRight, BarChart3, LineChart, RefreshCw, Brain, Calendar, Sparkles, HardDrive, TrendingDown, Eye, EyeOff, Radio, Cpu, FileText } from 'lucide-react'
 import { StatCard, ContentCard, ActivityItem, ProgressBar } from '@/components/cards'
 import { PageHeader } from '@/components/layout'
 import { LineChart as RechartsLine, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { api } from '@/lib/api'
+import { BASE_URL } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 
 export default function IoTMonitoring() {
@@ -31,6 +32,34 @@ export default function IoTMonitoring() {
     } catch (e) {
       console.error('Failed to load telemetry:', e)
       setRecentTelemetry([])
+    }
+  }
+
+  const handleExport = async (format) => {
+    const url = `${BASE_URL}/api/v1/telemetry/export?format=${format}`;
+    const token = api.getToken();
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: token ? `Bearer ${token}` : undefined,
+        },
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `telemetry.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(downloadUrl);
+        document.body.removeChild(a);
+        toast.success(`Telemetry exported as ${format.toUpperCase()}`);
+      } else {
+        toast.error('Export failed');
+      }
+    } catch (error) {
+      toast.error('Export failed');
     }
   }
 
@@ -112,6 +141,20 @@ export default function IoTMonitoring() {
           >
             <RefreshCw className="w-4 h-4" />
             Actualiser
+          </Button>
+          <Button 
+            onClick={() => handleExport('excel')} 
+            className="bg-green-600 hover:bg-green-700 shadow-lg font-semibold px-6 py-2 flex items-center gap-2"
+          >
+            <FileText className="w-4 h-4" />
+            Export Excel
+          </Button>
+          <Button 
+            onClick={() => handleExport('pdf')} 
+            className="bg-red-600 hover:bg-red-700 shadow-lg font-semibold px-6 py-2 flex items-center gap-2"
+          >
+            <FileText className="w-4 h-4" />
+            Export PDF
           </Button>
         </div>
       </div>
