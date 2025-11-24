@@ -4,46 +4,42 @@
 -- Create alerts table
 CREATE TABLE IF NOT EXISTS alerts (
     id SERIAL PRIMARY KEY,
+    alert_id VARCHAR(255) UNIQUE NOT NULL,
     device_id VARCHAR(255) NOT NULL,
-    alert_type VARCHAR(50) NOT NULL,
+    ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     severity VARCHAR(20) NOT NULL,
-    message TEXT NOT NULL,
-    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    resolved BOOLEAN DEFAULT FALSE,
-    resolved_at TIMESTAMP WITH TIME ZONE
+    score DECIMAL(10,6) DEFAULT 0.0,
+    reason TEXT,
+    acknowledged BOOLEAN DEFAULT FALSE,
+    meta JSONB
 );
 
 -- Create devices table
 CREATE TABLE IF NOT EXISTS devices (
-    id SERIAL PRIMARY KEY,
-    device_id VARCHAR(255) UNIQUE NOT NULL,
+    device_id VARCHAR(255) PRIMARY KEY,
     name VARCHAR(255),
-    type VARCHAR(50),
-    location VARCHAR(255),
-    status VARCHAR(20) DEFAULT 'offline',
+    fw_version VARCHAR(255),
     last_seen TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    tags JSONB,
+    type VARCHAR(100),
+    location VARCHAR(255)
 );
 
 -- Create telemetry table
 CREATE TABLE IF NOT EXISTS telemetry (
     id SERIAL PRIMARY KEY,
     device_id VARCHAR(255) NOT NULL,
+    ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     temperature DECIMAL(5,2),
     humidity DECIMAL(5,2),
-    tx_bytes BIGINT,
-    rx_bytes BIGINT,
-    connections INTEGER,
     distance DECIMAL(8,2),
     motion BOOLEAN,
     rfid_uid VARCHAR(255),
     servo_state VARCHAR(50),
     led_states JSONB,
-    timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    is_anomaly BOOLEAN DEFAULT FALSE,
-    anomaly_score DECIMAL(10,6),
-    model_status VARCHAR(20) DEFAULT 'pending'
+    tx_bytes BIGINT DEFAULT 0,
+    rx_bytes BIGINT DEFAULT 0,
+    connections INTEGER DEFAULT 0
 );
 
 -- Create users table
@@ -60,36 +56,35 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Create Suricata alerts table
 CREATE TABLE IF NOT EXISTS suricata_alerts (
-    id SERIAL PRIMARY KEY,
-    event_ts TIMESTAMP WITH TIME ZONE NOT NULL,
-    src_ip INET,
-    src_port INTEGER,
-    dest_ip INET,
-    dest_port INTEGER,
+    id BIGSERIAL PRIMARY KEY,
+    event_ts TIMESTAMP WITH TIME ZONE,
+    event_type VARCHAR(255),
+    src_ip VARCHAR(255),
+    src_port VARCHAR(10),
+    dest_ip VARCHAR(255),
+    dest_port VARCHAR(10),
     proto VARCHAR(10),
     signature TEXT,
-    category VARCHAR(100),
-    severity INTEGER,
+    signature_id VARCHAR(255),
+    severity VARCHAR(20),
     raw JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_alerts_alert_id ON alerts(alert_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_device_id ON alerts(device_id);
-CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp);
-CREATE INDEX IF NOT EXISTS idx_alerts_resolved ON alerts(resolved);
+CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(ts);
+CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged);
 
 CREATE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id);
-CREATE INDEX IF NOT EXISTS idx_devices_status ON devices(status);
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_device_id ON telemetry(device_id);
-CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON telemetry(timestamp);
-CREATE INDEX IF NOT EXISTS idx_telemetry_is_anomaly ON telemetry(is_anomaly);
+CREATE INDEX IF NOT EXISTS idx_telemetry_ts ON telemetry(ts);
 
 CREATE INDEX IF NOT EXISTS idx_suricata_alerts_event_ts ON suricata_alerts(event_ts);
 CREATE INDEX IF NOT EXISTS idx_suricata_alerts_src_ip ON suricata_alerts(src_ip);
 CREATE INDEX IF NOT EXISTS idx_suricata_alerts_dest_ip ON suricata_alerts(dest_ip);
-CREATE INDEX IF NOT EXISTS idx_suricata_alerts_category ON suricata_alerts(category);
 CREATE INDEX IF NOT EXISTS idx_suricata_alerts_severity ON suricata_alerts(severity);
 
 -- Insert default admin user (password: admin123)

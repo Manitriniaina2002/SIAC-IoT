@@ -24,7 +24,7 @@ services:
     build: ./backend
     container_name: siac-backend
     ports:
-      - "8000:8000"
+      - "18000:8000"
     environment:
       - DATABASE_URL=postgresql://siac:password@postgres:5432/siac_db
       - MQTT_BROKER=mosquitto
@@ -72,7 +72,7 @@ services:
     image: influxdb:2.7
     container_name: siac-influxdb
     ports:
-      - "8086:8086"
+      - "18086:8086"
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
@@ -115,7 +115,7 @@ services:
     ports:
       - "80:80"
     environment:
-      - VITE_API_URL=http://backend:8000
+      - VITE_API_URL=http://localhost:18000
     depends_on:
       - backend
     networks:

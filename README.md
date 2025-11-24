@@ -143,10 +143,10 @@ docker-compose up -d --build
 
 **URLs d'accès :**
 - **Frontend** : http://localhost:80 (production) / http://localhost:5173 (développement)
-- **Backend API** : http://localhost:8000
-- **Documentation API** : http://localhost:8000/docs
+- **Backend API** : http://localhost:18000
+- **Documentation API** : http://localhost:18000/docs
 - **Grafana** : http://localhost:3000 (admin/admin)
-- **InfluxDB** : http://localhost:8086
+- **InfluxDB** : http://localhost:18086
 
 ### Production
 
