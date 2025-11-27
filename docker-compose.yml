@@ -109,17 +109,35 @@ services:
       - influxdb
     restart: unless-stopped
 
-  frontend:
-    build: ./frontend
-    container_name: siac-frontend
+  nodered:
+    image: nodered/node-red:latest
+    container_name: siac-nodered
     ports:
-      - "80:80"
+      - "1880:1880"
     environment:
-      - VITE_API_URL=http://localhost:18000
-    depends_on:
-      - backend
+      - TZ=Europe/Paris
+    volumes:
+      - nodered_data:/data
     networks:
       - siac-network
+    depends_on:
+      - mosquitto
+      - influxdb
+    restart: unless-stopped
+
+  suricata:
+    image: jasonish/suricata:latest
+    container_name: siac-suricata
+    network_mode: host # Pour analyser le trafic réseau hôte
+    volumes:
+      - ./infra/suricata/rules:/etc/suricata/rules:ro
+      - ./infra/suricata/logs:/var/log/suricata
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Optionnel pour monitoring
+    environment:
+      - SURICATA_OPTIONS=-i eth0 --af-packet # Adapter selon l'interface réseau
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
     restart: unless-stopped
 
 networks:
@@ -131,3 +149,4 @@ volumes:
   influxdb_data:
   grafana_data:
   mosquitto_data:
+  nodered_data:
