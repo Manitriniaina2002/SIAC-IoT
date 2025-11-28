@@ -1,7 +1,24 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, WebSocket
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from .models import (
+    AuthRequest,
+    AuthResponse,
+    Device,
+    DeviceCreate,
+    DeviceUpdate,
+    Telemetry,
+    DeviceORM,
+    UserORM,
+    TelemetryORM,
+    AlertORM,
+    SuricataLog,
+    SuricataLogORM,
+    User,
+    UserCreate,
+    UserUpdate,
+)
 from .models import (
     AuthRequest,
     AuthResponse,
@@ -34,6 +51,14 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
 from reportlab.lib import colors
 import io
+import json
+import threading
+import paho.mqtt.client as mqtt
+import smtplib
+from email.mime.text import MIMEText
+import json
+import threading
+import paho.mqtt.client as mqtt
 
 try:
     from .ml_service import anomaly_service
@@ -203,6 +228,9 @@ def on_startup():
     finally:
         db.close()
     
+    # Initialize MQTT client
+    init_mqtt_client()
+    
     # Entraîner le modèle ML si pas déjà entraîné
     try:
         if anomaly_service and anomaly_service.model_status == "pending":
@@ -210,6 +238,183 @@ def on_startup():
     except Exception as e:
         print(f"Warning: ML service initialization failed: {e}")
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+
+# MQTT Client setup
+mqtt_client = None
+mqtt_connected = False
+
+# WebSocket connections
+websocket_connections = set()
+
+def on_mqtt_connect(client, userdata, flags, rc):
+    global mqtt_connected
+    if rc == 0:
+        mqtt_connected = True
+        print("MQTT connected successfully")
+        # Subscribe to ESP32 telemetry topics
+        client.subscribe("devices/+/telemetry")
+        print("Subscribed to devices/+/telemetry")
+    else:
+        mqtt_connected = False
+        print(f"MQTT connection failed with code {rc}")
+
+def on_mqtt_disconnect(client, userdata, rc):
+    global mqtt_connected
+    mqtt_connected = False
+    print(f"MQTT disconnected with code {rc}")
+
+def on_mqtt_message(client, userdata, msg):
+    try:
+        payload = json.loads(msg.payload.decode())
+        device_id = msg.topic.split('/')[1]  # Extract device_id from topic
+        
+        # Process telemetry data
+        process_telemetry(device_id, payload)
+    except Exception as e:
+        print(f"Error processing MQTT message: {e}")
+
+def process_telemetry(device_id: str, payload: dict):
+    """Process incoming telemetry from ESP32 devices"""
+    try:
+        db = SessionLocal()
+        
+        # Extract sensor data
+        sensors = payload.get('sensors', {})
+        net = payload.get('net', {})
+        
+        # Create telemetry record
+        telemetry = TelemetryORM(
+            device_id=device_id,
+            ts=datetime.utcnow(),
+            temperature=sensors.get('temperature'),
+            humidity=sensors.get('humidity'),
+            distance=sensors.get('distance'),
+            motion=sensors.get('motion'),
+            rfid_uid=sensors.get('rfid_uid'),
+            servo_state=sensors.get('servo_state'),
+            led_states=sensors.get('led_states'),
+            tx_bytes=net.get('tx_bytes', 0),
+            rx_bytes=net.get('rx_bytes', 0),
+            connections=net.get('connections', 0)
+        )
+        
+        db.add(telemetry)
+        
+        # Update device last_seen
+        device = db.query(DeviceORM).filter(DeviceORM.device_id == device_id).first()
+        if device:
+            device.last_seen = datetime.utcnow()
+            # Broadcast device status update
+            import asyncio
+            asyncio.create_task(broadcast_websocket_message({
+                "type": "device_status",
+                "device_id": device_id,
+                "last_seen": device.last_seen.isoformat(),
+                "status": "online"
+            }))
+        else:
+            # Create device if it doesn't exist
+            device = DeviceORM(
+                device_id=device_id,
+                name=f"ESP32-{device_id}",
+                type="esp32",
+                last_seen=datetime.utcnow()
+            )
+            db.add(device)
+            # Broadcast new device
+            import asyncio
+            asyncio.create_task(broadcast_websocket_message({
+                "type": "device_status",
+                "device_id": device_id,
+                "name": device.name,
+                "type": device.type,
+                "last_seen": device.last_seen.isoformat(),
+                "status": "online"
+            }))
+        
+        # Check for anomalies using ML service
+        if anomaly_service:
+            features = [
+                sensors.get('temperature', 0) or 0,
+                sensors.get('humidity', 0) or 0,
+                sensors.get('distance', 0) or 0,
+                1 if sensors.get('motion', False) else 0,
+                net.get('tx_bytes', 0),
+                net.get('rx_bytes', 0),
+                net.get('connections', 0)
+            ]
+            
+            is_anomaly, score = anomaly_service.predict_anomaly(features)
+            
+            if is_anomaly:
+                # Create alert
+                alert = AlertORM(
+                    alert_id=str(uuid.uuid4()),
+                    device_id=device_id,
+                    ts=datetime.utcnow(),
+                    severity="high" if score > 0.8 else "medium",
+                    score=score,
+                    reason="Anomaly detected in sensor data",
+                    acknowledged=False
+                )
+                db.add(alert)
+                
+                # Send email alert if configured
+                maybe_send_email_alert(alert)
+                
+                # Broadcast alert via WebSocket
+                import asyncio
+                asyncio.create_task(broadcast_websocket_message({
+                    "type": "alert",
+                    "alert_id": alert.alert_id,
+                    "device_id": device_id,
+                    "severity": alert.severity,
+                    "score": score,
+                    "reason": alert.reason,
+                    "ts": alert.ts.isoformat()
+                }))
+        
+        db.commit()
+        
+        # Broadcast telemetry update via WebSocket
+        import asyncio
+        asyncio.create_task(broadcast_websocket_message({
+            "type": "telemetry",
+            "device_id": device_id,
+            "sensors": sensors,
+            "net": net,
+            "ts": datetime.utcnow().isoformat()
+        }))
+        
+        print(f"Processed telemetry for device {device_id}")
+        
+    except Exception as e:
+        print(f"Error processing telemetry: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+def init_mqtt_client():
+    global mqtt_client
+    mqtt_host = os.environ.get("MQTT_HOST", "localhost")
+    mqtt_port = int(os.environ.get("MQTT_PORT", "1883"))
+    mqtt_user = os.environ.get("MQTT_USER")
+    mqtt_pass = os.environ.get("MQTT_PASS")
+    
+    mqtt_client = mqtt.Client()
+    mqtt_client.on_connect = on_mqtt_connect
+    mqtt_client.on_disconnect = on_mqtt_disconnect
+    mqtt_client.on_message = on_mqtt_message
+    
+    if mqtt_user and mqtt_pass:
+        mqtt_client.username_pw_set(mqtt_user, mqtt_pass)
+    
+    try:
+        mqtt_client.connect(mqtt_host, mqtt_port, 60)
+        mqtt_client.loop_start()  # Start in background thread
+        print(f"MQTT client initialized for {mqtt_host}:{mqtt_port}")
+    except Exception as e:
+        print(f"Failed to initialize MQTT client: {e}")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
@@ -224,7 +429,37 @@ def root():
 
 @app.get("/api/v1/health")
 def health():
-    return {"status": "ok", "components": {"mqtt": "ok", "influx": "ok"}}
+    return {"status": "ok", "components": {"mqtt": "connected" if mqtt_connected else "disconnected", "influx": "ok"}}
+
+
+async def broadcast_websocket_message(message: dict):
+    """Broadcast message to all connected WebSocket clients"""
+    disconnected = set()
+    for websocket in websocket_connections:
+        try:
+            await websocket.send_json(message)
+        except:
+            disconnected.add(websocket)
+    
+    # Remove disconnected clients
+    websocket_connections.difference_update(disconnected)
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    websocket_connections.add(websocket)
+    
+    try:
+        while True:
+            # Keep connection alive, clients can send ping messages if needed
+            data = await websocket.receive_text()
+            # Echo back for connection health check
+            await websocket.send_json({"type": "pong", "data": data})
+    except:
+        pass
+    finally:
+        websocket_connections.discard(websocket)
 
 
 @app.post("/api/v1/auth/login", response_model=AuthResponse)

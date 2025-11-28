@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/layout'
 import { LineChart as RechartsLine, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import AnimatedBackground from '@/components/AnimatedBackground'
 import { api } from '@/lib/api'
+import { useWebSocket } from '@/lib/utils'
 
 export default function Dashboard() {
   const [devices, setDevices] = useState([])
@@ -27,6 +28,34 @@ export default function Dashboard() {
   const [activitySeries, setActivitySeries] = useState([])
   const [volumeSeries, setVolumeSeries] = useState([])
   const seenAlertsRef = useRef(new Set())
+
+  // WebSocket for real-time updates
+  const wsUrl = `ws://localhost:8888/ws` // Adjust if backend has WebSocket endpoint
+  const { isConnected: wsConnected } = useWebSocket(wsUrl, (data) => {
+    if (data.type === 'telemetry') {
+      // Update device data in real-time
+      setDevices(prev => prev.map(device => 
+        device.device_id === data.device_id 
+          ? { ...device, last_seen: new Date().toISOString() }
+          : device
+      ))
+    } else if (data.type === 'alert') {
+      // Show real-time alert
+      if (data.severity === 'high' && !seenAlertsRef.current.has(data.alert_id)) {
+        seenAlertsRef.current.add(data.alert_id)
+        toast.error(`${data.device_id}: ${data.reason || 'Alerte haute sévérité'}`, { duration: 6000 })
+      }
+      // Refresh alerts
+      loadSummary()
+    } else if (data.type === 'device_status') {
+      // Update device status
+      setDevices(prev => prev.map(device => 
+        device.device_id === data.device_id 
+          ? { ...device, ...data }
+          : device
+      ))
+    }
+  })
 
   // Chart data
   const deviceActivityData = activitySeries
@@ -134,6 +163,17 @@ export default function Dashboard() {
                 ML: {modelStatus.status === 'trained' ? 'Actif' : 'En attente'}
               </span>
             )}
+            <span
+              className={`px-4 py-2 text-sm rounded-full font-semibold shadow-lg flex items-center gap-2 ${
+                wsConnected 
+                  ? 'bg-blue-500 text-white border-2 border-blue-300' 
+                  : 'bg-gray-500 text-white border-2 border-gray-300'
+              }`}
+              title={wsConnected ? 'WebSocket connecté' : 'WebSocket déconnecté'}
+            >
+              <Wifi className="w-4 h-4" />
+              WS: {wsConnected ? 'Connecté' : 'Déconnecté'}
+            </span>
             <Button 
               onClick={() => { loadDevices(); loadSummary(); }} 
               className="bg-white hover:bg-gray-50 shadow-lg font-semibold px-6 py-2 flex items-center gap-2"
