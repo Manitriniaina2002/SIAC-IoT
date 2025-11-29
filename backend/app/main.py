@@ -363,7 +363,7 @@ def login(req: AuthRequest):
         raise HTTPException(status_code=503, detail="Database service unavailable")
 
     user = influx_data_service.get_user(req.username)
-    if not user or not influx_data_service.verify_password(req.password, user.get("hashed_password", "")):
+    if not user or not influx_data_service.verify_password(req.password, user.get("password", "")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     return AuthResponse(

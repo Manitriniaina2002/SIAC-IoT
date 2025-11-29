@@ -151,20 +151,27 @@ class InfluxDBDataService:
         |> range(start: -1y)
         |> filter(fn: (r) => r._measurement == "users")
         |> filter(fn: (r) => r.username == "{username}")
-        |> limit(n: 1)
+        |> sort(columns: ["_time"], desc: true)
+        |> limit(n: 10)
         '''
 
         try:
             result = self.query_api.query(flux_query)
-            if result and len(result) > 0 and len(result[0].records) > 0:
-                record = result[0].records[0]
-                return {
-                    "username": record["username"],
-                    "hashed_password": record["_value"] if record["_field"] == "hashed_password" else None,
-                    "email": record["_value"] if record["_field"] == "email" else None,
-                    "role": record["_value"] if record["_field"] == "role" else "admin",
-                    "is_active": record["_value"] if record["_field"] == "is_active" else True,
-                }
+            if result and len(result) > 0:
+                user_data = {"username": username}
+                for table in result:
+                    for record in table.records:
+                        field = record["_field"]
+                        value = record["_value"]
+                        if field == "hashed_password":
+                            user_data["password"] = value
+                        elif field == "email":
+                            user_data["email"] = value
+                        elif field == "role":
+                            user_data["role"] = value
+                        elif field == "is_active":
+                            user_data["is_active"] = value
+                return user_data if len(user_data) > 1 else None
             return None
         except Exception as e:
             print(f"Error getting user: {e}")
@@ -186,6 +193,72 @@ class InfluxDBDataService:
             return True
         except Exception as e:
             print(f"Error deleting user: {e}")
+            return False
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        """List all users"""
+        if not self.is_connected():
+            return []
+
+        flux_query = f'''
+        from(bucket: "{self.bucket}")
+        |> range(start: -1y)
+        |> filter(fn: (r) => r._measurement == "users")
+        |> sort(columns: ["_time"], desc: true)
+        |> limit(n: 100)
+        '''
+
+        try:
+            result = self.query_api.query(flux_query)
+            users = {}
+            user_data = {}
+
+            for table in result:
+                for record in table.records:
+                    username = record["username"]
+                    if username not in user_data:
+                        user_data[username] = {"username": username}
+
+                    field = record["_field"]
+                    value = record["_value"]
+                    if field == "role":
+                        user_data[username][field] = value
+                    elif field == "email":
+                        user_data[username][field] = value
+                    elif field == "is_active":
+                        user_data[username][field] = value
+                    elif field == "hashed_password":
+                        user_data[username]["password"] = value  # For compatibility
+
+            return list(user_data.values())
+        except Exception as e:
+            print(f"Error listing users: {e}")
+            return []
+
+    def update_user(self, username: str, update_data: Dict[str, Any]) -> bool:
+        """Update user information"""
+        if not self.is_connected():
+            return False
+
+        try:
+            # Get existing user data
+            user = self.get_user(username)
+            if not user:
+                return False
+
+            # Create new point with updated data
+            point = Point("users") \
+                .tag("username", username) \
+                .field("password_hash", update_data.get("password", user.get("password", ""))) \
+                .field("email", update_data.get("email", user.get("email", ""))) \
+                .field("role", update_data.get("role", user.get("role", "viewer"))) \
+                .field("is_active", update_data.get("is_active", user.get("is_active", True))) \
+                .time(datetime.utcnow(), WritePrecision.NS)
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            return True
+        except Exception as e:
+            print(f"Error updating user: {e}")
             return False
 
     # Device Management
@@ -278,6 +351,36 @@ class InfluxDBDataService:
         except Exception as e:
             print(f"Error listing devices: {e}")
             return []
+
+    def update_device(self, device_id: str, update_data: Dict[str, Any]) -> bool:
+        """Update device information"""
+        if not self.is_connected():
+            return False
+
+        try:
+            # Get existing device data
+            device = self.get_device(device_id)
+            if not device:
+                return False
+
+            # Create new point with updated data
+            point = Point("devices") \
+                .tag("device_id", device_id) \
+                .field("name", update_data.get("name", device.get("name", ""))) \
+                .field("fw_version", update_data.get("fw_version", device.get("fw_version", ""))) \
+                .field("type", update_data.get("type", device.get("type", ""))) \
+                .field("location", update_data.get("location", device.get("location", ""))) \
+                .field("tags", json.dumps(update_data.get("tags", device.get("tags", [])))) \
+                .time(datetime.utcnow(), WritePrecision.NS)
+
+            if update_data.get("last_seen"):
+                point = point.field("last_seen", update_data["last_seen"].isoformat())
+
+            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
+            return True
+        except Exception as e:
+            print(f"Error updating device: {e}")
+            return False
 
     def update_device_last_seen(self, device_id: str, last_seen: datetime) -> bool:
         """Update device last seen timestamp"""
