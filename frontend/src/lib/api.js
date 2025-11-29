@@ -77,5 +77,11 @@ export const api = {
   getSuricataStats: () => request('/api/v1/suricata/logs/stats'),
   getSuricataAlerts: () => request('/api/v1/suricata/logs/alerts'),
   // InfluxDB endpoints
-  getInfluxSensorData: (deviceId, limit = 50) => request(`/api/v1/influx/sensor-data${deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : ''}&limit=${encodeURIComponent(limit)}`),
+  getInfluxSensorData: (deviceId, limit = 50) => {
+    const baseUrl = `/api/v1/influx/sensor-data`;
+    const params = new URLSearchParams();
+    if (deviceId) params.append('device_id', deviceId);
+    params.append('limit', limit);
+    return request(`${baseUrl}?${params.toString()}`);
+  },
 }

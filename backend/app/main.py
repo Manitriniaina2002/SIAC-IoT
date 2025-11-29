@@ -344,14 +344,20 @@ async def broadcast_websocket_message(message: dict):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     websocket_connections.add(websocket)
-    
+
     try:
+        # Keep connection alive for broadcasting, don't expect client messages
         while True:
-            # Keep connection alive, clients can send ping messages if needed
-            data = await websocket.receive_text()
-            # Echo back for connection health check
-            await websocket.send_json({"type": "pong", "data": data})
-    except:
+            try:
+                # Wait for any message with a timeout to keep connection alive
+                await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                # If we get a message, echo it back for health check
+                await websocket.send_json({"type": "pong", "timestamp": datetime.utcnow().isoformat()})
+            except asyncio.TimeoutError:
+                # Send a ping to keep connection alive
+                await websocket.send_json({"type": "ping", "timestamp": datetime.utcnow().isoformat()})
+    except Exception:
+        # Connection closed or error
         pass
     finally:
         websocket_connections.discard(websocket)
@@ -1167,6 +1173,72 @@ def data_volume_7d():
         return out
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get data volume: {str(e)}")
+
+
+# InfluxDB Sensor Data Endpoint
+@app.get("/api/v1/influx/sensor-data")
+def get_influx_sensor_data(device_id: Optional[str] = None, limit: int = 50):
+    """Get sensor data from InfluxDB for charting"""
+    if not influx_service or not influx_service.is_connected():
+        raise HTTPException(status_code=503, detail="InfluxDB not connected")
+
+    try:
+        # Get recent telemetry data and aggregate by time for charting
+        device_filter = f'|> filter(fn: (r) => r.device_id == "{device_id}")' if device_id else ""
+
+        flux_query = f'''
+        from(bucket: "{influx_service.bucket}")
+        |> range(start: -24h)
+        |> filter(fn: (r) => r._measurement == "telemetry")
+        {device_filter}
+        |> sort(columns: ["_time"], desc: true)
+        |> limit(n: {limit * 3})  // Get more records since we have multiple fields per timestamp
+        '''
+
+        result = influx_service.query_data(flux_query)
+
+        # Aggregate data by timestamp
+        time_series = {}
+
+        if result:
+            for table in result:
+                for record in table.records:
+                    ts = record["_time"]
+                    time_key = ts.replace(second=0, microsecond=0)  # Round to minute
+
+                    if time_key not in time_series:
+                        time_series[time_key] = {
+                            "time": time_key,
+                            "temperature": None,
+                            "humidity": None,
+                            "distance": None
+                        }
+
+                    field = record["_field"]
+                    value = record["_value"]
+
+                    if field == "temperature":
+                        time_series[time_key]["temperature"] = value
+                    elif field == "humidity":
+                        time_series[time_key]["humidity"] = value
+                    elif field == "distance":
+                        time_series[time_key]["distance"] = value
+
+        # Convert to list and sort by time
+        chart_data = list(time_series.values())
+        chart_data.sort(key=lambda x: x["time"], reverse=True)
+
+        # Limit the results
+        chart_data = chart_data[:limit]
+
+        # Format time for frontend
+        for item in chart_data:
+            item["time"] = item["time"].strftime("%H:%M")
+
+        return chart_data
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get sensor data: {str(e)}")
 
 
 # Suricata Security Logs Endpoints

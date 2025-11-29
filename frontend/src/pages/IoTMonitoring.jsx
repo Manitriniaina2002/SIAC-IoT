@@ -413,8 +413,8 @@ export default function IoTMonitoring() {
         gradientFrom="green-50"
         gradientTo="emerald-50"
       >
-        <div className="h-80">
-          <ResponsiveContainer width="100%" height="100%">
+        <div className="h-80 w-full min-h-[320px]">
+          <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
             <LineChart data={sensorData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="time" />

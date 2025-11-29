@@ -235,31 +235,11 @@ class InfluxDBDataService:
             print(f"Error listing users: {e}")
             return []
 
-    def update_user(self, username: str, update_data: Dict[str, Any]) -> bool:
-        """Update user information"""
+    def query_data(self, flux_query: str):
+        """Query data using Flux query"""
         if not self.is_connected():
-            return False
-
-        try:
-            # Get existing user data
-            user = self.get_user(username)
-            if not user:
-                return False
-
-            # Create new point with updated data
-            point = Point("users") \
-                .tag("username", username) \
-                .field("password_hash", update_data.get("password", user.get("password", ""))) \
-                .field("email", update_data.get("email", user.get("email", ""))) \
-                .field("role", update_data.get("role", user.get("role", "viewer"))) \
-                .field("is_active", update_data.get("is_active", user.get("is_active", True))) \
-                .time(datetime.utcnow(), WritePrecision.NS)
-
-            self.write_api.write(bucket=self.bucket, org=self.org, record=point)
-            return True
-        except Exception as e:
-            print(f"Error updating user: {e}")
-            return False
+            return None
+        return self.query_api.query(flux_query)
 
     # Device Management
     def create_device(self, device_data: DeviceData) -> bool:
@@ -661,6 +641,32 @@ class InfluxDBDataService:
             if alert_result and len(alert_result) > 0:
                 alert_count_24h = alert_result[0].records[0]["_value"] if alert_result[0].records else 0
 
+            # Active alerts (unacknowledged)
+            active_alert_query = f'''
+            from(bucket: "{self.bucket}")
+            |> range(start: -30d)
+            |> filter(fn: (r) => r._measurement == "alerts")
+            |> filter(fn: (r) => r._field == "acknowledged" and r._value == false)
+            |> count()
+            '''
+            active_alert_result = self.query_api.query(active_alert_query)
+            alerts_active = 0
+            if active_alert_result and len(active_alert_result) > 0:
+                alerts_active = active_alert_result[0].records[0]["_value"] if active_alert_result[0].records else 0
+
+            # Anomalies in last 24h (ML-detected alerts)
+            anomaly_query = f'''
+            from(bucket: "{self.bucket}")
+            |> range(start: -24h)
+            |> filter(fn: (r) => r._measurement == "alerts")
+            |> filter(fn: (r) => r._field == "reason" and contains(value: r._value, set: ["ML", "anomalie"]))
+            |> count()
+            '''
+            anomaly_result = self.query_api.query(anomaly_query)
+            anomalies_24h = 0
+            if anomaly_result and len(anomaly_result) > 0:
+                anomalies_24h = anomaly_result[0].records[0]["_value"] if anomaly_result[0].records else 0
+
             # Telemetry count (last 24h)
             telemetry_query = f'''
             from(bucket: "{self.bucket}")
@@ -673,10 +679,31 @@ class InfluxDBDataService:
             if telemetry_result and len(telemetry_result) > 0:
                 telemetry_count_24h = telemetry_result[0].records[0]["_value"] if telemetry_result[0].records else 0
 
+            # Data volume today (GB)
+            from datetime import datetime, timedelta
+            today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            data_volume_query = f'''
+            from(bucket: "{self.bucket}")
+            |> range(start: {today_start.isoformat()}Z)
+            |> filter(fn: (r) => r._measurement == "telemetry")
+            |> filter(fn: (r) => r._field == "tx_bytes" or r._field == "rx_bytes")
+            |> sum()
+            '''
+            data_volume_result = self.query_api.query(data_volume_query)
+            data_volume_today_bytes = 0
+            if data_volume_result and len(data_volume_result) > 0:
+                for table in data_volume_result:
+                    for record in table.records:
+                        data_volume_today_bytes += record.get_value() or 0
+            data_volume_today_gb = round(data_volume_today_bytes / (1024 ** 3), 2)
+
             return {
                 "total_devices": device_count,
                 "alerts_24h": alert_count_24h,
+                "alerts_active": alerts_active,
+                "anomalies_24h": anomalies_24h,
                 "telemetry_24h": telemetry_count_24h,
+                "data_volume_today_gb": data_volume_today_gb,
                 "system_status": "operational" if self.is_connected() else "error"
             }
         except Exception as e:
