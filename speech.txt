@@ -1,0 +1,59 @@
+Slide 1 : Titre et Présentation (Présentateur 1) « Monsieur le Président du jury, Messieurs les membres du jury, Monsieur notre encadreur, bonjour. Nous avons l'honneur de vous présenter aujourd'hui le fruit de notre travail de fin d'année universitaire. Notre projet s'intitule : "Plateforme IoT de Monitoring et Détection d'Anomalies pour Systèmes Connectés".
+
+Ce travail a été réalisé par mon collègue Monsieur RANDRIAMBOLOLONA et moi-même, Monsieur ANDRIATSITOHAINA, sous l'encadrement bienveillant de Monsieur RANDRIAMIARISON Zilga Heritiana. »
+
+Slide : Contexte Générale et Problématique (Présentateur 1) « Pour commencer, situons le contexte. Nous vivons aujourd'hui l'essor fulgurant de l'Internet des Objets (IoT). Si cette technologie favorise une collecte massive de données, cette interconnexion croissante expose les systèmes à des risques majeurs : intrusions, pertes de données et cyberattaques.
+
+Face à ce constat, nous nous sommes posé la problématique suivante : Comment concevoir une architecture IoT qui soit à la fois intelligente et sécurisée, capable d'assurer la collecte, le stockage et l'analyse des données, tout en détectant les intrusions et les anomalies en temps réel ? »
+
+Slide 01 : Introduction au projet SIAC-IoT (Présentateur 1) « C'est pour répondre à cette problématique que nous avons conçu le projet SIAC-IoT. Il s'agit d'une solution intégrée qui combine une architecture moderne en plusieurs couches. Elle allie la gestion efficace des données, une interface utilisateur intuitive et une infrastructure robuste pour garantir la surveillance et l'analyse des systèmes connectés. »
+
+Slide : Objectifs du Projet (Présentateur 1) « Nos objectifs sont clairs. L'Objectif Général est de développer une plateforme complète intégrant des capteurs ESP32, un serveur MQTT, des bases de données spécialisées, ainsi qu'un système de détection d'intrusion (IDS) et un modèle d'Intelligence Artificielle.
+
+Plus spécifiquement, nous avons travaillé à :
+
+Concevoir des nœuds IoT basés sur l'ESP32.
+
+Configurer un serveur MQTT et les bases de données (InfluxDB et PostgreSQL).
+
+Développer une interface web de supervision.
+
+Et enfin, sécuriser l'ensemble via le protocole TLS et intégrer de l'IA pour la détection d'anomalies.
+
+Je laisse maintenant la parole à mon collègue pour vous détailler l'aspect technique. »
+
+Partie Technique et Réalisation
+Slide 02 : Architecture et Technologies (Présentateur 2) « Merci. Passons au cœur technique du projet. Notre architecture repose sur un choix technologique rigoureux :
+
+Côté IoT : Nous utilisons des microcontrôleurs ESP32 équipés de divers capteurs (DHT22, Ultrason, RFID...) et actionneurs.
+
+Communication : Les échanges se font via le protocole MQTT (avec le broker Mosquitto), sécurisé par TLS pour garantir la confidentialité.
+
+Traitement & Stockage : Nous utilisons Node-RED pour l'orchestration des flux. Les données temporelles (comme la température) vont dans InfluxDB, tandis que les données structurées sont gérées par PostgreSQL.
+
+Sécurité Réseau : Nous avons déployé Suricata, un IDS performant pour surveiller le trafic et détecter les intrusions.
+
+Application Web : Le tout est piloté via une application développée avec FastAPI pour le backend et React JS pour le frontend, le tout déployé via Docker sur un environnement Linux. »
+
+Slide : Diagramme des Flux (Présentateur 2) « Comme vous pouvez le voir sur ce diagramme, le flux de données est structuré en 4 étapes :
+
+Les capteurs ESP32 collectent les données.
+
+Ils les transmettent de manière sécurisée au Broker MQTT.
+
+Ces données sont stockées (InfluxDB/PostgreSQL) et analysées.
+
+Enfin, l'application Web permet à l'utilisateur de visualiser le tableau de bord en temps réel et de contrôler les actionneurs (comme les LEDs ou le servomoteur). »
+
+Slide : Sécurité et Détection d'Anomalies (IA/ML) (Présentateur 2) « Ce qui distingue notre projet, c'est l'accent mis sur la sécurité et l'intelligence.
+
+Niveau Sécurité : Nous chiffrons les communications en TLS/HTTPS et utilisons des listes de contrôle d'accès (ACLs) sur le serveur MQTT.
+
+Niveau Intelligence (IA) : Nous avons intégré un module de Machine Learning. Ce script Python analyse les flux en temps réel pour détecter des valeurs anormales (hors seuil) ou des comportements suspects. En cas d'anomalie, le système déclenche automatiquement des alertes sur l'interface web et envoie des notifications (Telegram/SMS). »
+
+Démonstration et Conclusion
+Slide : Démonstration (Présentateur 1 ou 2) « Avant de conclure, nous vous proposons une brève démonstration de la plateforme en fonctionnement pour illustrer la communication temps réel et la détection d'anomalies. » (Réalisez votre démo ici)
+
+Slide 03 : Conclusion (Présentateur 1) « Pour conclure, le projet SIAC-IoT met en œuvre une architecture moderne et modulaire. Nous avons réussi à combiner la fiabilité de la collecte de données, la robustesse de la sécurité via IDS et TLS, et la puissance de l'IA pour l'analyse. C'est une solution qui offre un excellent équilibre entre performance et expérience utilisateur, adaptée aux exigences actuelles des systèmes connectés. »
+
+Slide de Fin (Présentateur 1 & 2) « Nous vous remercions de votre aimable attention et nous sommes maintenant à votre disposition pour répondre à vos questions. »
