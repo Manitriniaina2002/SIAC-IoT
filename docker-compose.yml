@@ -26,19 +26,19 @@ services:
     ports:
       - "18000:8000"
     environment:
-      - DATABASE_URL=postgresql://siac:password@postgres:5432/siac_db
       - MQTT_BROKER=mosquitto
       - MQTT_PORT=1883
       - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=siac-token
+      - INFLUXDB_ORG=siac
+      - INFLUXDB_BUCKET=bucket_iot
       - PYTHONUNBUFFERED=1
       - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://frontend:80
     depends_on:
-      postgres:
-        condition: service_healthy
       mosquitto:
         condition: service_started
       influxdb:
-        condition: service_started
+        condition: service_healthy
     networks:
       - siac-network
     volumes:
