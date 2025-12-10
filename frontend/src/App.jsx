@@ -169,16 +169,19 @@ export default function App() {
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider>
         <Toaster 
-          position="top-right"
+          position="top-center"
           toastOptions={{
             duration: 3000,
             style: {
               background: '#fff',
               color: '#333',
               border: '1px solid #ddd',
-              padding: '16px',
-              borderRadius: '8px',
-              fontSize: '14px',
+              padding: '20px 24px',
+              borderRadius: '12px',
+              fontSize: '16px',
+              minWidth: '400px',
+              maxWidth: '600px',
+              boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
             },
             success: {
               iconTheme: {

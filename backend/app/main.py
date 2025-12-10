@@ -20,6 +20,7 @@ import paho.mqtt.client as mqtt
 import smtplib
 from email.mime.text import MIMEText
 from passlib.context import CryptContext
+import ssl
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
@@ -290,10 +291,11 @@ def process_telemetry(device_id: str, payload: dict):
 
 def init_mqtt_client():
     global mqtt_client
-    mqtt_host = os.environ.get("MQTT_HOST", "localhost")
-    mqtt_port = int(os.environ.get("MQTT_PORT", "1883"))
-    mqtt_user = os.environ.get("MQTT_USER")
-    mqtt_pass = os.environ.get("MQTT_PASS")
+    mqtt_host = os.environ.get("MQTT_HOST")
+    mqtt_port = int(os.environ.get("MQTT_PORT"))
+    mqtt_user = os.environ.get("MQTT_USERNAME")
+    mqtt_pass = os.environ.get("MQTT_PASSWORD")
+    mqtt_ca_cert = os.environ.get("MQTT_CA_CERT")
     
     mqtt_client = mqtt.Client()
     mqtt_client.on_connect = on_mqtt_connect
@@ -302,6 +304,10 @@ def init_mqtt_client():
     
     if mqtt_user and mqtt_pass:
         mqtt_client.username_pw_set(mqtt_user, mqtt_pass)
+
+    # TLS configuration
+    mqtt_client.tls_set(ca_certs=mqtt_ca_cert, keyfile=None, tls_version=ssl.PROTOCOL_TLS_CLIENT)
+    mqtt_client.tls_insecure_set(False)
     
     try:
         mqtt_client.connect(mqtt_host, mqtt_port, 60)
@@ -798,48 +804,38 @@ def resolve_alert(alert_id: str):
 
 @app.get("/api/v1/alerts/recommendations")
 def get_alert_recommendations():
-    """Get alert recommendations from InfluxDB"""
+    """Get ML-generated alert recommendations from anomaly analysis"""
     if not influx_service or not influx_service.is_connected():
         raise HTTPException(status_code=503, detail="InfluxDB not connected")
+    
+    if not anomaly_service:
+        raise HTTPException(status_code=503, detail="ML service not available")
 
     try:
         active_alerts = influx_service.get_active_alerts()
-
         recommendations = []
 
-        for alert in active_alerts[:10]:  # Limit to 10
+        for alert in active_alerts[:10]:  # Limit to 10 most recent
+            # Utiliser le service ML pour générer des recommandations intelligentes
+            ml_recommendation = anomaly_service.generate_recommendations(
+                alert=alert,
+                telemetry_history=None  # TODO: Optionally fetch telemetry history for trend analysis
+            )
+            
             rec = {
                 "alert_id": alert.get("alert_id"),
                 "device_id": alert.get("device_id"),
                 "severity": alert.get("severity"),
                 "reason": alert.get("reason"),
-                "actions": []
+                "ml_status": ml_recommendation.get("status"),
+                "priority": ml_recommendation.get("priority", "unknown"),
+                "urgency": ml_recommendation.get("urgency", "à déterminer"),
+                "confidence": ml_recommendation.get("confidence", 0.0),
+                "ml_score": ml_recommendation.get("ml_score", 0.0),
+                "root_cause": ml_recommendation.get("root_cause_analysis", []),
+                "actions": ml_recommendation.get("recommendations", []),
+                "timestamp": ml_recommendation.get("timestamp")
             }
-
-            # Recommandations basées sur le type d'anomalie
-            if "temp" in (alert.get("reason") or "").lower():
-                rec["actions"] = [
-                    "Vérifier le système de climatisation",
-                    "Inspecter les capteurs de température",
-                    "Vérifier la ventilation de l'équipement"
-                ]
-            elif "ml" in (alert.get("reason") or "").lower():
-                rec["actions"] = [
-                    "Analyser les logs détaillés du device",
-                    "Vérifier les patterns de télémétrie récents",
-                    "Inspecter physiquement le dispositif si comportement inhabituel persiste"
-                ]
-            elif "température" in (alert.get("reason") or "").lower():
-                rec["actions"] = [
-                    "Ajuster les seuils de température",
-                    "Vérifier l'environnement du capteur"
-                ]
-            else:
-                rec["actions"] = [
-                    "Vérifier les logs du device",
-                    "Redémarrer le device si nécessaire",
-                    "Contacter le support technique"
-                ]
 
             # Try to get device info
             device = influx_service.get_device(alert.get("device_id"))
@@ -852,6 +848,7 @@ def get_alert_recommendations():
 
         return {
             "count": len(recommendations),
+            "ml_enabled": anomaly_service.model_status == "trained",
             "recommendations": recommendations
         }
     except Exception as e:
@@ -1295,7 +1292,7 @@ def get_suricata_stats():
         flux_query = '''
         from(bucket: "bucket_iot")
         |> range(start: -24h)
-        |> filter(fn: (r) => r._measurement == "suricata_logs")
+        |> filter(fn: (r) => r._measurement == "suricata_alerts")
         |> sort(columns: ["_time"], desc: true)
         '''
 
@@ -1364,7 +1361,7 @@ def get_suricata_alerts():
         flux_query = '''
         from(bucket: "bucket_iot")
         |> range(start: -7d)
-        |> filter(fn: (r) => r._measurement == "suricata_logs")
+        |> filter(fn: (r) => r._measurement == "suricata_alerts")
         |> filter(fn: (r) => r._field == "severity" and (r._value == "1" or r._value == "2"))
         |> sort(columns: ["_time"], desc: true)
         |> limit(n: 50)
@@ -1392,6 +1389,148 @@ def get_suricata_alerts():
         return alerts
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get Suricata alerts: {str(e)}")
+
+
+@app.get("/api/v1/suricata/logs/export")
+async def export_suricata_logs(format: str = "excel"):
+    """Export Suricata logs to Excel or PDF"""
+    if not influx_service or not influx_service.is_connected():
+        raise HTTPException(status_code=503, detail="InfluxDB not connected")
+
+    try:
+        # Get all recent Suricata logs
+        logs = influx_service.get_recent_suricata_logs(limit=1000)
+        
+        if format.lower() == "excel":
+            # Create Excel file
+            import io
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Suricata Alerts"
+            
+            # Headers
+            headers = ["Timestamp", "Signature", "Severity", "Source IP", "Source Port", 
+                      "Destination IP", "Destination Port", "Protocol", "Action", "Category"]
+            ws.append(headers)
+            
+            # Style headers
+            for cell in ws[1]:
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill(start_color="D32F2F", end_color="D32F2F", fill_type="solid")
+                cell.alignment = Alignment(horizontal="center")
+            
+            # Add data
+            for log in logs:
+                severity = log.get('severity', '')
+                severity_label = 'CRITIQUE' if severity == 1 else 'ÉLEVÉ' if severity == 2 else 'MOYEN' if severity == 3 else 'FAIBLE'
+                
+                ws.append([
+                    str(log.get('event_ts', '')),
+                    log.get('signature', ''),
+                    severity_label,
+                    log.get('src_ip', ''),
+                    log.get('src_port', ''),
+                    log.get('dest_ip', ''),
+                    log.get('dest_port', ''),
+                    log.get('proto', ''),
+                    log.get('action', ''),
+                    log.get('category', '')
+                ])
+            
+            # Auto-adjust column widths
+            for column in ws.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(cell.value)
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                ws.column_dimensions[column_letter].width = adjusted_width
+            
+            # Save to bytes
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+            
+            return Response(
+                content=output.getvalue(),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename=suricata_alerts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"}
+            )
+            
+        elif format.lower() == "pdf":
+            # Create PDF file
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import letter, landscape
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+            from reportlab.lib.styles import getSampleStyleSheet
+            import io
+            
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=landscape(letter))
+            elements = []
+            
+            # Title
+            styles = getSampleStyleSheet()
+            title = Paragraph("<b>Rapport d'Alertes Suricata IDS</b>", styles['Title'])
+            elements.append(title)
+            elements.append(Spacer(1, 12))
+            
+            # Subtitle
+            subtitle = Paragraph(f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M:%S')}", styles['Normal'])
+            elements.append(subtitle)
+            elements.append(Spacer(1, 20))
+            
+            # Table data
+            data = [["Timestamp", "Signature", "Sév.", "IP Source", "IP Dest", "Action"]]
+            
+            for log in logs[:100]:  # Limit to 100 for PDF
+                severity = log.get('severity', '')
+                severity_label = 'CRIT' if severity == 1 else 'ÉLEV' if severity == 2 else 'MOY' if severity == 3 else 'FAIB'
+                
+                data.append([
+                    str(log.get('event_ts', ''))[:19],
+                    str(log.get('signature', ''))[:40],
+                    severity_label,
+                    log.get('src_ip', ''),
+                    log.get('dest_ip', ''),
+                    log.get('action', '')
+                ])
+            
+            # Create table
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#D32F2F')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            
+            elements.append(table)
+            doc.build(elements)
+            
+            buffer.seek(0)
+            return Response(
+                content=buffer.getvalue(),
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"attachment; filename=suricata_alerts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"}
+            )
+        
+        else:
+            raise HTTPException(status_code=400, detail="Format not supported. Use 'excel' or 'pdf'")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export Suricata logs: {str(e)}")
 
 
 # Export endpoints

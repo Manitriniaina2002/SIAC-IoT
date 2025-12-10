@@ -46,6 +46,7 @@ async function request(path, { method = 'GET', body, headers = {} } = {}) {
 }
 
 export const api = {
+  getToken,
   login: (username, password) => request('/api/v1/auth/login', { method: 'POST', body: { username, password } }),
   // Users
   getUsers: () => request('/api/v1/users'),

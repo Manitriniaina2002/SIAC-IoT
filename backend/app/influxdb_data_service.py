@@ -481,24 +481,39 @@ class InfluxDBDataService:
         |> range(start: -7d)
         |> filter(fn: (r) => r._measurement == "alerts")
         |> sort(columns: ["_time"], desc: true)
-        |> limit(n: {limit})
         '''
 
         try:
             result = self.query_api.query(flux_query)
-            alerts = []
-
+            
+            # Group records by alert_id and timestamp
+            alerts_by_key = {}
+            
             for table in result:
                 for record in table.records:
-                    alerts.append({
-                        "alert_id": record["alert_id"],
-                        "device_id": record["device_id"],
-                        "ts": record["_time"],
-                        "severity": record["_value"] if record["_field"] == "severity" else None,
-                        "score": record["_value"] if record["_field"] == "score" else None,
-                        "reason": record["_value"] if record["_field"] == "reason" else None,
-                        "acknowledged": record["_value"] if record["_field"] == "acknowledged" else None,
-                    })
+                    alert_id = record.values.get("alert_id")
+                    device_id = record.values.get("device_id")
+                    timestamp = record.get_time()
+                    field_name = record.get_field()
+                    field_value = record.get_value()
+                    
+                    key = (alert_id, timestamp)
+                    
+                    if key not in alerts_by_key:
+                        alerts_by_key[key] = {
+                            "alert_id": alert_id,
+                            "device_id": device_id,
+                            "ts": timestamp
+                        }
+                    
+                    alerts_by_key[key][field_name] = field_value
+            
+            # Convert to list and sort by timestamp (descending)
+            alerts = list(alerts_by_key.values())
+            alerts.sort(key=lambda x: x.get("ts", ""), reverse=True)
+            
+            # Limit results
+            alerts = alerts[:limit]
 
             return alerts
         except Exception as e:
@@ -580,29 +595,33 @@ class InfluxDBDataService:
         flux_query = f'''
         from(bucket: "{self.bucket}")
         |> range(start: -24h)
-        |> filter(fn: (r) => r._measurement == "suricata_logs")
+        |> filter(fn: (r) => r._measurement == "suricata_alerts")
         |> sort(columns: ["_time"], desc: true)
-        |> limit(n: {limit})
         '''
 
         try:
             result = self.query_api.query(flux_query)
-            logs = []
-
+            
+            # Group records by timestamp
+            logs_by_time = {}
+            
             for table in result:
                 for record in table.records:
-                    logs.append({
-                        "event_ts": record["_time"],
-                        "event_type": record["_value"] if record["_field"] == "event_type" else None,
-                        "src_ip": record["_value"] if record["_field"] == "src_ip" else None,
-                        "src_port": record["_value"] if record["_field"] == "src_port" else None,
-                        "dest_ip": record["_value"] if record["_field"] == "dest_ip" else None,
-                        "dest_port": record["_value"] if record["_field"] == "dest_port" else None,
-                        "proto": record["_value"] if record["_field"] == "proto" else None,
-                        "signature": record["_value"] if record["_field"] == "signature" else None,
-                        "signature_id": record["_value"] if record["_field"] == "signature_id" else None,
-                        "severity": record["_value"] if record["_field"] == "severity" else None,
-                    })
+                    timestamp = record.get_time()
+                    field_name = record.get_field()
+                    field_value = record.get_value()
+                    
+                    if timestamp not in logs_by_time:
+                        logs_by_time[timestamp] = {"event_ts": timestamp}
+                    
+                    logs_by_time[timestamp][field_name] = field_value
+            
+            # Convert to list and sort by timestamp (descending)
+            logs = list(logs_by_time.values())
+            logs.sort(key=lambda x: x.get("event_ts", ""), reverse=True)
+            
+            # Limit results
+            logs = logs[:limit]
 
             return logs
         except Exception as e:

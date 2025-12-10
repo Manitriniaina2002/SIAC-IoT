@@ -13,11 +13,6 @@ services:
       - "25432:5432"
     networks:
       - siac-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U siac -d siac_db"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
     restart: unless-stopped
 
   backend:
@@ -26,127 +21,48 @@ services:
     ports:
       - "18000:8000"
     environment:
-      - MQTT_BROKER=mosquitto
+      - MQTT_HOST=mosquitto_secure
       - MQTT_PORT=1883
+      - MQTT_USERNAME=nodered
+      - MQTT_PASSWORD=nodered
+      - MQTT_TLS_ENABLED=false
+      - MQTT_CA_CERT=/app/certs/ca.crt
       - INFLUXDB_URL=http://influxdb:8086
       - INFLUXDB_TOKEN=siac-token
       - INFLUXDB_ORG=siac
       - INFLUXDB_BUCKET=bucket_iot
+      - DATABASE_URL=postgresql://siac:password@postgres:5432/siac_db
       - PYTHONUNBUFFERED=1
-      - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://frontend:80
+      - CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://172.21.0.8:3000/
     depends_on:
-      mosquitto:
-        condition: service_started
-      influxdb:
-        condition: service_healthy
-    networks:
-      - siac-network
+      - postgres
     volumes:
-      - ./backend/model_isolation_forest.pkl:/app/model_isolation_forest.pkl
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import requests; requests.get('http://localhost:8000/api/v1/health')",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-
-  mosquitto:
-    image: eclipse-mosquitto:2.0
-    container_name: siac-mosquitto
-    ports:
-      - "1885:1883"
-    volumes:
-      - ./infra/mosquitto/config:/mosquitto/config:ro
-      - mosquitto_data:/mosquitto/data
+      - ./backend:/app
+      - ../iot-security/mosquitto/certs:/app/certs:ro
     networks:
       - siac-network
     restart: unless-stopped
 
-  influxdb:
-    image: influxdb:2.7
-    container_name: siac-influxdb
+  frontend:
+    image: node:20-alpine
+    container_name: siac-frontend
+    working_dir: /app
+    command: ["sh", "-c", "npm install && npm run dev -- --host 0.0.0.0"]
     ports:
-      - "18086:8086"
+      - "5173:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     environment:
-      - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=password
-      - DOCKER_INFLUXDB_INIT_ORG=siac
-      - DOCKER_INFLUXDB_INIT_BUCKET=bucket_iot
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=siac-token
-    volumes:
-      - influxdb_data:/var/lib/influxdb
-    networks:
-      - siac-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-
-  grafana:
-    image: grafana/grafana:10.2.0
-    container_name: siac-grafana
-    ports:
-      - "3100:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=password
-      - GF_USERS_ALLOW_SIGN_UP=false
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./infra/grafana/provisioning:/etc/grafana/provisioning
-    networks:
-      - siac-network
+      - VITE_API_URL=http://localhost:18000
     depends_on:
-      - influxdb
-    restart: unless-stopped
-
-  nodered:
-    image: nodered/node-red:latest
-    container_name: siac-nodered
-    ports:
-      - "18800:1880"
-    environment:
-      - TZ=Europe/Paris
-    volumes:
-      - nodered_data:/data
+      - backend
     networks:
       - siac-network
-    depends_on:
-      - mosquitto
-      - influxdb
-    restart: unless-stopped
-
-  suricata:
-    image: jasonish/suricata:latest
-    container_name: siac-suricata
-    network_mode: host # Pour analyser le trafic réseau hôte
-    volumes:
-      - ./infra/suricata/rules:/etc/suricata/rules:ro
-      - ./infra/suricata/logs:/var/log/suricata
-      - /var/run/docker.sock:/var/run/docker.sock:ro # Optionnel pour monitoring
-    environment:
-      - SURICATA_OPTIONS=-i eth0 --af-packet # Adapter selon l'interface réseau
-    cap_add:
-      - NET_RAW
-      - NET_ADMIN
-    restart: unless-stopped
 
 networks:
   siac-network:
-    driver: bridge
+    external: true
 
 volumes:
   postgres_data:
-  influxdb_data:
-  grafana_data:
-  mosquitto_data:
-  nodered_data:

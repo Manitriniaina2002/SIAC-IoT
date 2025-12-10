@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
-import { Shield, AlertTriangle, AlertCircle, Info, Lightbulb, Clock, Wifi, WifiOff, Lock, Unlock, Network, Database, Server, Eye, Zap, FileText } from 'lucide-react'
+import { Shield, AlertTriangle, AlertCircle, Info, Lightbulb, Clock, Wifi, WifiOff, Lock, Unlock, Network, Database, Server, Eye, Zap, FileText, ChevronLeft, ChevronRight } from 'lucide-react'
 import { StatCard, ContentCard } from '@/components/cards'
 import { PageHeader } from '@/components/layout'
 import AnimatedBackground from '@/components/AnimatedBackground'
@@ -12,6 +12,13 @@ export default function IDSAlerts() {
   const [suricataLogs, setSuricataLogs] = useState([])
   const [suricataStats, setSuricataStats] = useState({})
   const [backendConnected, setBackendConnected] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage] = useState(3)
+  const [currentEventsPage, setCurrentEventsPage] = useState(1)
+  const [eventsPerPage] = useState(5)
+  const [dateFilter, setDateFilter] = useState('all')
+  const [customStartDate, setCustomStartDate] = useState('')
+  const [customEndDate, setCustomEndDate] = useState('')
 
   const loadSuricataData = async () => {
     try {
@@ -29,7 +36,7 @@ export default function IDSAlerts() {
   }
 
   const handleExport = async (format) => {
-    const url = `${BASE_URL}/api/v1/logs/export?format=${format}`;
+    const url = `${BASE_URL}/api/v1/suricata/logs/export?format=${format}`;
     const token = api.getToken();
     try {
       const response = await fetch(url, {
@@ -42,17 +49,19 @@ export default function IDSAlerts() {
         const downloadUrl = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = downloadUrl;
-        a.download = `logs.${format}`;
+        const extension = format === 'excel' ? 'xlsx' : format;
+        a.download = `suricata_alerts_${new Date().toISOString().split('T')[0]}.${extension}`;
         document.body.appendChild(a);
         a.click();
         window.URL.revokeObjectURL(downloadUrl);
         document.body.removeChild(a);
-        toast.success(`Logs exported as ${format.toUpperCase()}`);
+        toast.success(`Alertes exportées en ${format.toUpperCase()}`);
       } else {
-        toast.error('Export failed');
+        toast.error('Échec de l\'export');
       }
     } catch (error) {
-      toast.error('Export failed');
+      console.error('Export error:', error);
+      toast.error('Échec de l\'export');
     }
   }
 
@@ -120,8 +129,91 @@ export default function IDSAlerts() {
     return labels[category] || category || 'Inconnu'
   }
 
-  const highPriorityAlerts = suricataLogs.filter(log => log.severity <= 2)
-  const recentAlerts = suricataLogs.slice(0, 10)
+  // Date filtering logic
+  const filterByDate = (logs) => {
+    if (dateFilter === 'all') return logs
+    
+    const now = new Date()
+    let startDate = new Date()
+    
+    switch(dateFilter) {
+      case '1h':
+        startDate = new Date(now - 60 * 60 * 1000)
+        break
+      case '24h':
+        startDate = new Date(now - 24 * 60 * 60 * 1000)
+        break
+      case '7d':
+        startDate = new Date(now - 7 * 24 * 60 * 60 * 1000)
+        break
+      case '30d':
+        startDate = new Date(now - 30 * 24 * 60 * 60 * 1000)
+        break
+      case 'custom':
+        if (!customStartDate) return logs
+        startDate = new Date(customStartDate)
+        const endDate = customEndDate ? new Date(customEndDate) : now
+        return logs.filter(log => {
+          const logDate = new Date(log.event_ts || log.ts)
+          return logDate >= startDate && logDate <= endDate
+        })
+      default:
+        return logs
+    }
+    
+    return logs.filter(log => {
+      const logDate = new Date(log.event_ts || log.ts)
+      return logDate >= startDate
+    })
+  }
+
+  const filteredLogs = filterByDate(suricataLogs)
+  const highPriorityAlerts = filteredLogs.filter(log => log.severity <= 2)
+  const recentAlerts = filteredLogs
+
+  // Pagination logic for High Priority Alerts
+  const totalPages = Math.ceil(highPriorityAlerts.length / itemsPerPage)
+  const indexOfLastItem = currentPage * itemsPerPage
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage
+  const currentAlerts = highPriorityAlerts.slice(indexOfFirstItem, indexOfLastItem)
+
+  const nextPage = () => {
+    if (currentPage < totalPages) {
+      setCurrentPage(currentPage + 1)
+    }
+  }
+
+  const prevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1)
+    }
+  }
+
+  const goToPage = (pageNumber) => {
+    setCurrentPage(pageNumber)
+  }
+
+  // Pagination logic for Recent Events
+  const totalEventsPages = Math.ceil(recentAlerts.length / eventsPerPage)
+  const indexOfLastEvent = currentEventsPage * eventsPerPage
+  const indexOfFirstEvent = indexOfLastEvent - eventsPerPage
+  const currentEvents = recentAlerts.slice(indexOfFirstEvent, indexOfLastEvent)
+
+  const nextEventsPage = () => {
+    if (currentEventsPage < totalEventsPages) {
+      setCurrentEventsPage(currentEventsPage + 1)
+    }
+  }
+
+  const prevEventsPage = () => {
+    if (currentEventsPage > 1) {
+      setCurrentEventsPage(currentEventsPage - 1)
+    }
+  }
+
+  const goToEventsPage = (pageNumber) => {
+    setCurrentEventsPage(pageNumber)
+  }
 
   return (
     <div className="space-y-6 relative min-h-screen">
@@ -176,6 +268,101 @@ export default function IDSAlerts() {
         </div>
       </div>
 
+      {/* Date Filter */}
+      <div className="rounded-2xl p-6 bg-white/80 backdrop-blur-sm border border-gray-200">
+        <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Clock className="w-5 h-5 text-blue-600" />
+            <span className="font-semibold text-gray-700">Filtrer par date:</span>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setDateFilter('all')}
+              className={`px-4 py-2 rounded-lg border font-medium transition-colors ${
+                dateFilter === 'all'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Tout
+            </button>
+            <button
+              onClick={() => setDateFilter('1h')}
+              className={`px-4 py-2 rounded-lg border font-medium transition-colors ${
+                dateFilter === '1h'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              1 Heure
+            </button>
+            <button
+              onClick={() => setDateFilter('24h')}
+              className={`px-4 py-2 rounded-lg border font-medium transition-colors ${
+                dateFilter === '24h'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              24 Heures
+            </button>
+            <button
+              onClick={() => setDateFilter('7d')}
+              className={`px-4 py-2 rounded-lg border font-medium transition-colors ${
+                dateFilter === '7d'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              7 Jours
+            </button>
+            <button
+              onClick={() => setDateFilter('30d')}
+              className={`px-4 py-2 rounded-lg border font-medium transition-colors ${
+                dateFilter === '30d'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              30 Jours
+            </button>
+            <button
+              onClick={() => setDateFilter('custom')}
+              className={`px-4 py-2 rounded-lg border font-medium transition-colors ${
+                dateFilter === 'custom'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Personnalisé
+            </button>
+          </div>
+
+          {dateFilter === 'custom' && (
+            <div className="flex items-center gap-2 ml-auto">
+              <input
+                type="datetime-local"
+                value={customStartDate}
+                onChange={(e) => setCustomStartDate(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-gray-500">à</span>
+              <input
+                type="datetime-local"
+                value={customEndDate}
+                onChange={(e) => setCustomEndDate(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
+
+          <div className="ml-auto text-sm text-gray-600">
+            {filteredLogs.length} alerte{filteredLogs.length !== 1 ? 's' : ''} trouvée{filteredLogs.length !== 1 ? 's' : ''}
+          </div>
+        </div>
+      </div>
+
       {/* Security Stats */}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -221,7 +408,7 @@ export default function IDSAlerts() {
         gradientTo="rose-50"
       >
         <div className="space-y-4">
-          {highPriorityAlerts.map((alert, index) => (
+          {currentAlerts.map((alert, index) => (
             <div key={index} className={`border-2 rounded-lg p-4 bg-white/80 backdrop-blur-sm ${getSeverityColor(alert.severity)}`}>
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-3">
@@ -242,36 +429,102 @@ export default function IDSAlerts() {
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                 <div>
                   <span className="font-medium text-gray-700">IP Source:</span>
-                  <div className="font-mono">{alert.src_ip || 'N/A'}</div>
+                  <div className="font-mono text-gray-900">{alert.src_ip || 'N/A'}</div>
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700">Port Dest:</span>
-                  <div className="font-mono">{alert.dst_port || 'N/A'}</div>
+                  <span className="font-medium text-gray-700">IP Dest:</span>
+                  <div className="font-mono text-gray-900">{alert.dest_ip || alert.dst_ip || 'N/A'}</div>
                 </div>
                 <div>
                   <span className="font-medium text-gray-700">Action:</span>
-                  <div>{alert.action || 'logged'}</div>
+                  <div className="font-mono text-gray-900 uppercase">{alert.action || 'logged'}</div>
                 </div>
-                <div>
+              </div>
+              <div className="mt-3 pt-3 border-t border-gray-200">
+                <div className="text-sm">
                   <span className="font-medium text-gray-700">Signature:</span>
-                  <div className="truncate" title={alert.signature}>
-                    {alert.signature || 'N/A'}
-                  </div>
+                  <div className="text-gray-900 mt-1">{alert.signature || 'N/A'}</div>
                 </div>
               </div>
             </div>
           ))}
           
-          {highPriorityAlerts.length === 0 && (
+          {currentAlerts.length === 0 && (
             <div className="text-center py-8 text-gray-500">
               <Shield className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>Aucune alerte prioritaire détectée</p>
             </div>
           )}
         </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="mt-6 flex items-center justify-between border-t pt-4">
+            <div className="text-sm text-gray-600">
+              Affichage {indexOfFirstItem + 1}-{Math.min(indexOfLastItem, highPriorityAlerts.length)} sur {highPriorityAlerts.length} alertes
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <button
+                onClick={prevPage}
+                disabled={currentPage === 1}
+                className={`p-2 rounded-lg border ${
+                  currentPage === 1
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-300'
+                }`}
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-1">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => {
+                  // Show first page, last page, current page, and pages around current
+                  if (
+                    pageNum === 1 ||
+                    pageNum === totalPages ||
+                    (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
+                  ) {
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => goToPage(pageNum)}
+                        className={`px-4 py-2 rounded-lg border ${
+                          currentPage === pageNum
+                            ? 'bg-red-600 text-white border-red-600'
+                            : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-300'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    )
+                  } else if (
+                    pageNum === currentPage - 2 ||
+                    pageNum === currentPage + 2
+                  ) {
+                    return <span key={pageNum} className="px-2 text-gray-400">...</span>
+                  }
+                  return null
+                })}
+              </div>
+
+              <button
+                onClick={nextPage}
+                disabled={currentPage === totalPages}
+                className={`p-2 rounded-lg border ${
+                  currentPage === totalPages
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-300'
+                }`}
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        )}
       </ContentCard>
 
       {/* Recent Security Events */}
@@ -284,26 +537,37 @@ export default function IDSAlerts() {
         gradientTo="indigo-50"
       >
         <div className="space-y-3">
-          {recentAlerts.map((alert, index) => (
-            <div key={index} className="flex items-center justify-between p-3 bg-white/60 rounded-lg border border-gray-200">
-              <div className="flex items-center gap-3">
+          {currentEvents.map((alert, index) => (
+            <div key={index} className="flex items-start justify-between p-3 bg-white/60 rounded-lg border border-gray-200">
+              <div className="flex items-start gap-3 flex-1">
                 <div className={`p-2 rounded-full ${getSeverityColor(alert.severity)}`}>
                   {getCategoryIcon(getCategoryFromSignature(alert.signature))}
                 </div>
-                <div>
+                <div className="flex-1">
                   <div className="font-medium text-gray-800">
                     {alert.message || alert.signature || 'Événement de sécurité'}
                   </div>
-                  <div className="text-sm text-gray-600">
-                    {getCategoryLabel(getCategoryFromSignature(alert.signature))} • {alert.src_ip || 'IP inconnue'}
+                  <div className="text-sm text-gray-600 mt-1">
+                    {getCategoryLabel(getCategoryFromSignature(alert.signature))}
+                  </div>
+                  <div className="flex flex-wrap gap-3 mt-2 text-xs">
+                    <span className="font-mono text-gray-700">
+                      <strong>Src:</strong> {alert.src_ip || 'N/A'}
+                    </span>
+                    <span className="font-mono text-gray-700">
+                      <strong>Dest:</strong> {alert.dest_ip || alert.dst_ip || 'N/A'}
+                    </span>
+                    <span className="font-mono text-gray-700 uppercase">
+                      <strong>Action:</strong> {alert.action || 'logged'}
+                    </span>
                   </div>
                 </div>
               </div>
-              <div className="text-right">
-                <div className="text-sm text-gray-500">
+              <div className="text-right ml-3">
+                <div className="text-sm text-gray-500 whitespace-nowrap">
                   {new Date(alert.event_ts || alert.ts).toLocaleTimeString('fr-FR')}
                 </div>
-                <div className={`text-xs px-2 py-1 rounded-full ${getSeverityColor(alert.severity)}`}>
+                <div className={`text-xs px-2 py-1 rounded-full mt-1 ${getSeverityColor(alert.severity)}`}>
                   {getSeverityLabel(alert.severity)}
                 </div>
               </div>
@@ -317,6 +581,71 @@ export default function IDSAlerts() {
             </div>
           )}
         </div>
+
+        {recentAlerts.length > eventsPerPage && (
+          <div className="mt-6 pt-4 border-t border-gray-200">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-gray-600">
+                Affichage de {indexOfFirstEvent + 1} à {Math.min(indexOfLastEvent, recentAlerts.length)} sur {recentAlerts.length} événements
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={prevEventsPage}
+                  disabled={currentEventsPage === 1}
+                  className={`p-2 rounded-lg border ${
+                    currentEventsPage === 1
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-300'
+                  }`}
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+
+                <div className="flex gap-1">
+                  {Array.from({ length: totalEventsPages }, (_, i) => i + 1).map((pageNum) => {
+                    if (
+                      pageNum === 1 ||
+                      pageNum === totalEventsPages ||
+                      (pageNum >= currentEventsPage - 1 && pageNum <= currentEventsPage + 1)
+                    ) {
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => goToEventsPage(pageNum)}
+                          className={`px-4 py-2 rounded-lg border ${
+                            currentEventsPage === pageNum
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-300'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      )
+                    } else if (
+                      pageNum === currentEventsPage - 2 ||
+                      pageNum === currentEventsPage + 2
+                    ) {
+                      return <span key={pageNum} className="px-2 text-gray-400">...</span>
+                    }
+                    return null
+                  })}
+                </div>
+
+                <button
+                  onClick={nextEventsPage}
+                  disabled={currentEventsPage === totalEventsPages}
+                  className={`p-2 rounded-lg border ${
+                    currentEventsPage === totalEventsPages
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-300'
+                  }`}
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </ContentCard>
 
       {/* Security Categories Breakdown */}
