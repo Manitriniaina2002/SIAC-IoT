@@ -422,6 +422,7 @@ class InfluxDBDataService:
         |> range(start: -24h)
         |> filter(fn: (r) => r._measurement == "telemetry")
         {device_filter}
+        |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
         |> sort(columns: ["_time"], desc: true)
         |> limit(n: {limit})
         '''
@@ -435,12 +436,13 @@ class InfluxDBDataService:
                     telemetry_data.append({
                         "device_id": record["device_id"],
                         "ts": record["_time"],
-                        "temperature": record["_value"] if record["_field"] == "temperature" else None,
-                        "humidity": record["_value"] if record["_field"] == "humidity" else None,
-                        "distance": record["_value"] if record["_field"] == "distance" else None,
-                        "tx_bytes": record["_value"] if record["_field"] == "tx_bytes" else None,
-                        "rx_bytes": record["_value"] if record["_field"] == "rx_bytes" else None,
-                        "connections": record["_value"] if record["_field"] == "connections" else None,
+                        "temperature": record.values.get("temperature"),
+                        "humidity": record.values.get("humidity"),
+                        "distance": record.values.get("distance"),
+                        "tx_bytes": record.values.get("tx_bytes", 0),
+                        "rx_bytes": record.values.get("rx_bytes", 0),
+                        "connections": record.values.get("connections", 0),
+                        "motion": record.values.get("motion"),
                     })
 
             return telemetry_data

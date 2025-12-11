@@ -285,7 +285,7 @@ export default function Logs() {
                   {new Date(alert.ts).toLocaleString('fr-FR')}
                 </div>
                 <div className="text-xs px-2 py-1 rounded-full bg-red-100 text-red-700">
-                  Score: {alert.score.toFixed(2)}
+                  Score: {alert.score ? alert.score.toFixed(2) : 'N/A'}
                 </div>
               </div>
             </div>

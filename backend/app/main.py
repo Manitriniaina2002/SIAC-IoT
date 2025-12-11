@@ -195,33 +195,30 @@ def process_telemetry(device_id: str, payload: dict):
         sensors = payload.get('sensors', {})
         net = payload.get('net', {})
         
+        # Create TelemetryData object
+        from app.influxdb_data_service import TelemetryData
+        telemetry_data = TelemetryData(
+            device_id=device_id,
+            ts=datetime.utcnow(),
+            temperature=sensors.get('temperature'),
+            humidity=sensors.get('humidity'),
+            distance=sensors.get('distance'),
+            motion=sensors.get('motion'),
+            servo_state=sensors.get('servo_state'),
+            led_states=sensors.get('led_states'),
+            tx_bytes=net.get('tx_bytes', 0),
+            rx_bytes=net.get('rx_bytes', 0),
+            connections=net.get('connections', 0)
+        )
+        
         # Write telemetry to InfluxDB
         if influx_data_service:
-            influx_data_service.save_telemetry(
-                device_id=device_id,
-                temperature=sensors.get('temperature'),
-                humidity=sensors.get('humidity'),
-                distance=sensors.get('distance'),
-                motion=sensors.get('motion'),
-                servo_state=sensors.get('servo_state'),
-                led_states=sensors.get('led_states'),
-                tx_bytes=net.get('tx_bytes', 0),
-                rx_bytes=net.get('rx_bytes', 0),
-                connections=net.get('connections', 0),
-                timestamp=datetime.utcnow()
-            )
+            influx_data_service.save_telemetry(telemetry_data)
             
             # Update device last_seen
             influx_data_service.update_device_last_seen(device_id, datetime.utcnow())
             
-            # Broadcast device status update
-            import asyncio
-            asyncio.create_task(broadcast_websocket_message({
-                "type": "device_status",
-                "device_id": device_id,
-                "last_seen": datetime.utcnow().isoformat(),
-                "status": "online"
-            }))
+            print(f"✅ Telemetry saved: {device_id} - Temp: {sensors.get('temperature')}°C, Humidity: {sensors.get('humidity')}%")
 
         # Check for anomalies using ML service
         if anomaly_service:
@@ -235,7 +232,7 @@ def process_telemetry(device_id: str, payload: dict):
                 net.get('connections', 0)
             ]
             
-            is_anomaly, score = anomaly_service.predict_anomaly(features)
+            is_anomaly, score, reason = anomaly_service.predict_anomaly(features)
             
             if is_anomaly:
                 # Create alert in InfluxDB
@@ -246,7 +243,7 @@ def process_telemetry(device_id: str, payload: dict):
                         device_id=device_id,
                         severity="high" if score > 0.8 else "medium",
                         score=score,
-                        reason="Anomaly detected in sensor data",
+                        reason=reason or "Anomaly detected in sensor data",
                         acknowledged=False,
                         timestamp=datetime.utcnow()
                     )
@@ -257,7 +254,7 @@ def process_telemetry(device_id: str, payload: dict):
                         "device_id": device_id,
                         "severity": "high" if score > 0.8 else "medium",
                         "score": score,
-                        "reason": "Anomaly detected in sensor data",
+                        "reason": reason or "Anomaly detected in sensor data",
                         "ts": datetime.utcnow()
                     }
                     maybe_send_email_alert(alert_data)
@@ -296,6 +293,7 @@ def init_mqtt_client():
     mqtt_user = os.environ.get("MQTT_USERNAME")
     mqtt_pass = os.environ.get("MQTT_PASSWORD")
     mqtt_ca_cert = os.environ.get("MQTT_CA_CERT")
+    mqtt_tls_enabled = os.environ.get("MQTT_TLS_ENABLED", "false").lower() == "true"
     
     mqtt_client = mqtt.Client()
     mqtt_client.on_connect = on_mqtt_connect
@@ -305,9 +303,13 @@ def init_mqtt_client():
     if mqtt_user and mqtt_pass:
         mqtt_client.username_pw_set(mqtt_user, mqtt_pass)
 
-    # TLS configuration
-    mqtt_client.tls_set(ca_certs=mqtt_ca_cert, keyfile=None, tls_version=ssl.PROTOCOL_TLS_CLIENT)
-    mqtt_client.tls_insecure_set(False)
+    # TLS configuration only if enabled
+    if mqtt_tls_enabled and mqtt_ca_cert:
+        mqtt_client.tls_set(ca_certs=mqtt_ca_cert, keyfile=None, tls_version=ssl.PROTOCOL_TLS_CLIENT)
+        mqtt_client.tls_insecure_set(False)
+        print(f"MQTT TLS enabled with CA cert: {mqtt_ca_cert}")
+    else:
+        print("MQTT TLS disabled, using plain connection")
     
     try:
         mqtt_client.connect(mqtt_host, mqtt_port, 60)

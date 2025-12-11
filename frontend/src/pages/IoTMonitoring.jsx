@@ -37,43 +37,35 @@ export default function IoTMonitoring() {
 
   const loadSensorData = async () => {
     try {
-      // Try to get real data from InfluxDB
-      const data = await api.getInfluxSensorData()
+      // Get real ESP32 telemetry data
+      const data = await api.getRecentTelemetry(20)
+      console.log('📊 Telemetry data for chart:', data)
       if (data && data.length > 0) {
-        // Transform InfluxDB data to chart format
-        const chartData = data.slice(0, 20).map(item => ({
-          time: new Date(item.time).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-          temperature: item.temperature || 0,
-          humidity: item.humidity || 0,
-          distance: item.distance || 0
-        })).reverse()
-        setSensorData(chartData)
+        // Transform telemetry to chart format
+        const chartData = data
+          .filter(item => item.device_id === 'ESP32-001' && item.sensors)
+          .map(item => ({
+            time: new Date(item.ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            temperature: parseFloat(item.sensors.temperature) || 0,
+            humidity: parseFloat(item.sensors.humidity) || 0,
+            distance: parseFloat(item.sensors.distance) || 0
+          }))
+          .reverse()
+        
+        console.log('📈 Chart data transformed:', chartData)
+        if (chartData.length > 0) {
+          setSensorData(chartData)
+        } else {
+          console.warn('⚠️ No ESP32 data found after filtering')
+          setSensorData([])
+        }
       } else {
-        // Fallback to mock data if no real data
-        setSensorData([
-          { time: '08:00', temperature: 22, humidity: 45, distance: 120 },
-          { time: '09:00', temperature: 23, humidity: 48, distance: 115 },
-          { time: '10:00', temperature: 24, humidity: 52, distance: 110 },
-          { time: '11:00', temperature: 25, humidity: 50, distance: 125 },
-          { time: '12:00', temperature: 26, humidity: 47, distance: 118 },
-          { time: '13:00', temperature: 27, humidity: 45, distance: 122 },
-          { time: '14:00', temperature: 28, humidity: 43, distance: 115 },
-          { time: '15:00', temperature: 26, humidity: 46, distance: 120 }
-        ])
+        console.warn('⚠️ No telemetry data received')
+        setSensorData([])
       }
     } catch (e) {
-      console.error('Failed to load sensor data:', e)
-      // Use mock data as fallback
-      setSensorData([
-        { time: '08:00', temperature: 22, humidity: 45, distance: 120 },
-        { time: '09:00', temperature: 23, humidity: 48, distance: 115 },
-        { time: '10:00', temperature: 24, humidity: 52, distance: 110 },
-        { time: '11:00', temperature: 25, humidity: 50, distance: 125 },
-        { time: '12:00', temperature: 26, humidity: 47, distance: 118 },
-        { time: '13:00', temperature: 27, humidity: 45, distance: 122 },
-        { time: '14:00', temperature: 28, humidity: 43, distance: 115 },
-        { time: '15:00', temperature: 26, humidity: 46, distance: 120 }
-      ])
+      console.error('❌ Failed to load sensor data:', e)
+      setSensorData([])
     }
   }
 
@@ -109,6 +101,15 @@ export default function IoTMonitoring() {
     loadDevices()
     loadRecentTelemetry()
     loadSensorData()
+
+    // Auto-refresh telemetry and chart every 5 seconds for real-time updates
+    const intervalId = setInterval(() => {
+      loadRecentTelemetry()
+      loadSensorData()
+    }, 5000)
+
+    // Cleanup interval on unmount
+    return () => clearInterval(intervalId)
   }, [])
 
   const getSensorStatusColor = (value, type) => {
@@ -202,7 +203,7 @@ export default function IoTMonitoring() {
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         <StatCard
           title="ESP32 Controller"
-          value={devices.filter(d => d.device_id === 'esp32-001' && d.last_seen).length > 0 ? 'Actif' : 'Inactif'}
+          value={recentTelemetry.filter(t => t.device_id === 'ESP32-001').length > 0 ? 'Actif ✓' : 'Inactif'}
           description="Contrôleur principal ESP32"
           icon={Cpu}
           gradient="from-blue-500 via-cyan-600 to-teal-700"
@@ -210,7 +211,9 @@ export default function IoTMonitoring() {
 
         <StatCard
           title="Capteur DHT22"
-          value={devices.filter(d => d.device_id === 'dht22-001' && d.last_seen).length > 0 ? 'Actif' : 'Inactif'}
+          value={recentTelemetry.filter(t => t.device_id === 'ESP32-001' && t.sensors?.temperature).length > 0 
+            ? `${recentTelemetry.filter(t => t.device_id === 'ESP32-001')[0]?.sensors?.temperature?.toFixed(1)}°C` 
+            : 'Inactif'}
           description="Température et humidité"
           icon={TrendingUp}
           gradient="from-green-500 via-emerald-600 to-teal-700"
@@ -218,7 +221,9 @@ export default function IoTMonitoring() {
 
         <StatCard
           title="Capteur Ultrason"
-          value={devices.filter(d => d.device_id === 'ultrasonic-001' && d.last_seen).length > 0 ? 'Actif' : 'Inactif'}
+          value={recentTelemetry.filter(t => t.device_id === 'ESP32-001' && t.sensors?.distance).length > 0 
+            ? `${recentTelemetry.filter(t => t.device_id === 'ESP32-001')[0]?.sensors?.distance?.toFixed(0)} cm` 
+            : 'Inactif'}
           description="Détection de distance"
           icon={Radio}
           gradient="from-orange-500 via-amber-600 to-yellow-600"
@@ -226,7 +231,9 @@ export default function IoTMonitoring() {
 
         <StatCard
           title="LED Rouge"
-          value={recentTelemetry.filter(t => t.device_id === 'led-red-001').length > 0 ? 'Contrôlée' : 'Inconnue'}
+          value={recentTelemetry.filter(t => t.device_id === 'ESP32-001' && t.sensors?.distance).length > 0 
+            ? (recentTelemetry.filter(t => t.device_id === 'ESP32-001')[0]?.sensors?.distance < 20 ? '🔴 Allumée' : '⚫ Éteinte')
+            : 'Inconnue'}
           description="Indicateur rouge"
           icon={Zap}
           gradient="from-red-500 via-pink-600 to-rose-700"
@@ -234,7 +241,9 @@ export default function IoTMonitoring() {
 
         <StatCard
           title="LED Verte"
-          value={recentTelemetry.filter(t => t.device_id === 'led-green-001').length > 0 ? 'Contrôlée' : 'Inconnue'}
+          value={recentTelemetry.filter(t => t.device_id === 'ESP32-001' && t.sensors?.distance).length > 0 
+            ? (recentTelemetry.filter(t => t.device_id === 'ESP32-001')[0]?.sensors?.distance >= 20 ? '🟢 Allumée' : '⚫ Éteinte')
+            : 'Inconnue'}
           description="Indicateur vert"
           icon={CheckCircle}
           gradient="from-emerald-500 via-green-600 to-lime-700"
@@ -242,7 +251,10 @@ export default function IoTMonitoring() {
 
         <StatCard
           title="Température Moyenne"
-          value={`${recentTelemetry.reduce((acc, t) => acc + (t.sensors?.temperature || 0), 0) / Math.max(recentTelemetry.filter(t => t.sensors?.temperature).length, 1).toFixed(1)} °C`}
+          value={(() => {
+            const temps = recentTelemetry.filter(t => t.device_id === 'ESP32-001' && t.sensors?.temperature).map(t => t.sensors.temperature)
+            return temps.length > 0 ? `${(temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1)}°C` : 'Indisponible'
+          })()}
           description="Mesure DHT22"
           icon={TrendingUp}
           gradient="from-purple-500 via-violet-600 to-indigo-700"
@@ -252,111 +264,61 @@ export default function IoTMonitoring() {
       {/* Real-time Sensor Data */}
       <ContentCard
         title="Données Capteurs en Temps Réel"
-        description="État actuel des appareils IoT"
+        description="État actuel des appareils IoT ESP32"
         icon={Activity}
         iconColor="blue"
         gradientFrom="blue-50"
         gradientTo="cyan-50"
       >
         <div className="space-y-4">
-          {/* ESP32 Main Controller */}
-          {recentTelemetry.filter(t => t.device_id === 'esp32-001').slice(0, 1).map((telemetry, index) => (
-            <div key={`esp32-${index}`} className="border border-gray-200 rounded-lg p-4 bg-white/50 backdrop-blur-sm">
+          {/* ESP32 Main Controller with all sensors */}
+          {recentTelemetry.filter(t => t.device_id === 'ESP32-001').slice(0, 1).map((telemetry, index) => (
+            <div key={`esp32-${index}`} className="border border-blue-300 rounded-lg p-4 bg-gradient-to-r from-blue-50 to-cyan-50 shadow-md">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Cpu className="w-5 h-5 text-blue-600" />
                   <span className="font-semibold text-gray-800">ESP32 Main Controller</span>
-                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">esp32-001</span>
+                  <span className="text-xs bg-blue-500 text-white px-2 py-1 rounded font-semibold">ESP32-001</span>
+                  <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded flex items-center gap-1">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    Actif
+                  </span>
                 </div>
-                <span className="text-sm text-gray-500">
+                <span className="text-sm text-gray-500 font-medium">
                   {new Date(telemetry.ts).toLocaleString('fr-FR')}
                 </span>
               </div>
               
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Température</div>
-                  <div className="font-semibold text-lg">{formatSensorValue(telemetry.sensors?.temperature, 'temperature')}</div>
+                <div className="text-center bg-white/70 p-3 rounded-lg">
+                  <div className="text-xs text-gray-500 mb-1">🌡️ Température</div>
+                  <div className="font-bold text-2xl text-red-600">{telemetry.sensors?.temperature?.toFixed(1) || 'N/A'}°C</div>
                 </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Humidité</div>
-                  <div className="font-semibold text-lg">{formatSensorValue(telemetry.sensors?.humidity, 'humidity')}</div>
+                <div className="text-center bg-white/70 p-3 rounded-lg">
+                  <div className="text-xs text-gray-500 mb-1">💧 Humidité</div>
+                  <div className="font-bold text-2xl text-blue-600">{telemetry.sensors?.humidity?.toFixed(1) || 'N/A'}%</div>
                 </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Mouvement</div>
-                  <div className={`font-semibold text-sm px-2 py-1 rounded ${getSensorStatusColor(telemetry.sensors?.motion, 'motion')}`}>
-                    {formatSensorValue(telemetry.sensors?.motion, 'motion')}
-                  </div>
+                <div className="text-center bg-white/70 p-3 rounded-lg">
+                  <div className="text-xs text-gray-500 mb-1">📏 Distance</div>
+                  <div className="font-bold text-2xl text-green-600">{telemetry.sensors?.distance?.toFixed(0) || 'N/A'} cm</div>
                 </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Servo</div>
-                  <div className="font-semibold text-sm px-2 py-1 rounded bg-gray-50">
-                    {formatSensorValue(telemetry.sensors?.servo_state, 'servo_state')}
-                  </div>
+                <div className="text-center bg-white/70 p-3 rounded-lg">
+                  <div className="text-xs text-gray-500 mb-1">📡 Réseau</div>
+                  <div className="font-bold text-sm text-purple-600">{telemetry.net?.tx_bytes || 0} B TX</div>
                 </div>
               </div>
             </div>
           ))}
 
-          {/* Ultrasonic Distance Sensor */}
-          {recentTelemetry.filter(t => t.device_id === 'ultrasonic-001').slice(0, 1).map((telemetry, index) => (
-            <div key={`ultrasonic-${index}`} className="border border-gray-200 rounded-lg p-4 bg-white/50 backdrop-blur-sm">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Radio className="w-5 h-5 text-orange-600" />
-                  <span className="font-semibold text-gray-800">Capteur Ultrason</span>
-                  <span className="text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded">ultrasonic-001</span>
-                </div>
-                <span className="text-sm text-gray-500">
-                  {new Date(telemetry.ts).toLocaleString('fr-FR')}
-                </span>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Distance</div>
-                  <div className={`font-semibold text-lg px-2 py-1 rounded ${getSensorStatusColor(telemetry.sensors?.distance, 'distance')}`}>
-                    {formatSensorValue(telemetry.sensors?.distance, 'distance')}
-                  </div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">État</div>
-                  <div className="font-semibold text-sm px-2 py-1 rounded bg-green-50 text-green-700">
-                    Fonctionnel
-                  </div>
-                </div>
-              </div>
+          {recentTelemetry.filter(t => t.device_id === 'ESP32-001').length === 0 && (
+            <div className="text-center py-8 text-gray-500">
+              <Cpu className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>Aucune donnée ESP32 disponible</p>
+              <p className="text-sm mt-2">Vérifiez que l'ESP32 est connecté et envoie des données MQTT</p>
             </div>
-          ))}
+          )}
 
-          {/* DHT22 Temperature/Humidity Sensor */}
-          {recentTelemetry.filter(t => t.device_id === 'dht22-001').slice(0, 1).map((telemetry, index) => (
-            <div key={`dht22-${index}`} className="border border-gray-200 rounded-lg p-4 bg-white/50 backdrop-blur-sm">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-green-600" />
-                  <span className="font-semibold text-gray-800">Capteur DHT22</span>
-                  <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">dht22-001</span>
-                </div>
-                <span className="text-sm text-gray-500">
-                  {new Date(telemetry.ts).toLocaleString('fr-FR')}
-                </span>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Température</div>
-                  <div className="font-semibold text-lg">{formatSensorValue(telemetry.sensors?.temperature, 'temperature')}</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Humidité</div>
-                  <div className="font-semibold text-lg">{formatSensorValue(telemetry.sensors?.humidity, 'humidity')}</div>
-                </div>
-              </div>
-            </div>
-          ))}
-
-          {/* LED Indicators */}
+          {/* LED Indicators - if available */}
           {recentTelemetry.filter(t => t.device_id.startsWith('led-')).slice(0, 2).map((telemetry, index) => (
             <div key={`led-${index}`} className="border border-gray-200 rounded-lg p-4 bg-white/50 backdrop-blur-sm">
               <div className="flex items-center justify-between mb-3">
@@ -413,19 +375,141 @@ export default function IoTMonitoring() {
         gradientFrom="green-50"
         gradientTo="emerald-50"
       >
-        <div className="h-80 w-full min-h-[320px]">
-          <ResponsiveContainer width="100%" height="100%" minWidth={300} minHeight={300}>
-            <LineChart data={sensorData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="time" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="temperature" stroke="#ef4444" name="Température (°C)" />
-              <Line type="monotone" dataKey="humidity" stroke="#3b82f6" name="Humidité (%)" />
-              <Line type="monotone" dataKey="distance" stroke="#10b981" name="Distance (cm)" />
-            </LineChart>
-          </ResponsiveContainer>
+        {sensorData.length > 0 ? (
+          <div className="h-80 w-full">
+            <div className="mb-3 text-sm text-gray-600">
+              📊 Affichage des {sensorData.length} dernières mesures
+            </div>
+            <ResponsiveContainer width="100%" height={320} minWidth={300} minHeight={300}>
+              <LineChart data={sensorData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                <XAxis 
+                  dataKey="time" 
+                  label={{ value: 'Heure', position: 'insideBottom', offset: -5 }}
+                  tick={{ fontSize: 12 }}
+                />
+                <YAxis 
+                  label={{ value: 'Valeurs', angle: -90, position: 'insideLeft' }}
+                  tick={{ fontSize: 12 }}
+                  domain={['auto', 'auto']}
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: 'white', border: '1px solid #ccc', borderRadius: '8px', padding: '10px' }}
+                  labelStyle={{ fontWeight: 'bold', marginBottom: '5px' }}
+                />
+                <Legend wrapperStyle={{ paddingTop: '10px' }} />
+                <Line 
+                  type="monotone" 
+                  dataKey="temperature" 
+                  stroke="#ef4444" 
+                  strokeWidth={3} 
+                  name="Température (°C)" 
+                  dot={{ r: 5, fill: '#ef4444' }} 
+                  activeDot={{ r: 7 }}
+                  animationDuration={500}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="humidity" 
+                  stroke="#3b82f6" 
+                  strokeWidth={3} 
+                  name="Humidité (%)" 
+                  dot={{ r: 5, fill: '#3b82f6' }} 
+                  activeDot={{ r: 7 }}
+                  animationDuration={500}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="distance" 
+                  stroke="#10b981" 
+                  strokeWidth={3} 
+                  name="Distance (cm)" 
+                  dot={{ r: 5, fill: '#10b981' }} 
+                  activeDot={{ r: 7 }}
+                  animationDuration={500}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <div className="text-center py-12 text-gray-500">
+            <LineChart className="w-16 h-16 mx-auto mb-4 opacity-30" />
+            <p className="font-semibold">Aucune donnée disponible</p>
+            <p className="text-sm mt-2">Les données apparaîtront une fois que l'ESP32 aura envoyé suffisamment de lectures</p>
+          </div>
+        )}
+      </ContentCard>
+
+      {/* ESP32 Telemetry Logs */}
+      <ContentCard
+        title="Logs ESP32 (Temps Réel)"
+        description="Flux de données MQTT des capteurs ESP32"
+        icon={FileText}
+        iconColor="purple"
+        gradientFrom="purple-50"
+        gradientTo="violet-50"
+      >
+        <div className="space-y-2 max-h-96 overflow-y-auto">
+          {recentTelemetry.length > 0 ? (
+            recentTelemetry.map((log, index) => (
+              <div key={index} className="bg-gradient-to-r from-purple-50 to-violet-50 p-4 rounded-lg border border-purple-200 hover:shadow-md transition-shadow">
+                <div className="flex items-start justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span className="font-bold text-purple-700">{log.device_id}</span>
+                    <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded-full">
+                      {new Date(log.ts).toLocaleTimeString('fr-FR')}
+                    </span>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-red-600">🌡️</span>
+                    <span className="text-gray-600">Temp:</span>
+                    <span className="font-semibold">{log.sensors?.temperature?.toFixed(1) || 'N/A'}°C</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-blue-600">💧</span>
+                    <span className="text-gray-600">Hum:</span>
+                    <span className="font-semibold">{log.sensors?.humidity?.toFixed(1) || 'N/A'}%</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-green-600">📏</span>
+                    <span className="text-gray-600">Dist:</span>
+                    <span className="font-semibold">{log.sensors?.distance?.toFixed(0) || 'N/A'} cm</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-purple-600">📡</span>
+                    <span className="text-gray-600">TX:</span>
+                    <span className="font-semibold">{log.net?.tx_bytes || 0} B</span>
+                  </div>
+                </div>
+
+                {log.sensors?.motion !== undefined && (
+                  <div className="mt-2 text-xs">
+                    <span className={`px-2 py-1 rounded-full ${log.sensors.motion ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'}`}>
+                      {log.sensors.motion ? '🚶 Mouvement détecté' : '⚪ Aucun mouvement'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="text-center py-12 text-gray-500">
+              <FileText className="w-16 h-16 mx-auto mb-4 opacity-30" />
+              <p className="font-semibold">Aucun log ESP32 reçu</p>
+              <p className="text-sm mt-2">Les données apparaîtront dès que l'ESP32 enverra des données MQTT</p>
+              <div className="mt-4 text-xs bg-yellow-50 border border-yellow-200 rounded p-3 max-w-md mx-auto">
+                <p>💡 <strong>Vérifiez:</strong></p>
+                <ul className="text-left mt-2 space-y-1">
+                  <li>• ESP32 connecté au WiFi</li>
+                  <li>• Broker MQTT actif (port 11883)</li>
+                  <li>• Topic MQTT: <code className="bg-yellow-100 px-1">devices/+/telemetry</code></li>
+                </ul>
+              </div>
+            </div>
+          )}
         </div>
       </ContentCard>
 

@@ -306,26 +306,19 @@ export default function Dashboard() {
               </div>
             )}
             
-            <ProgressBar 
-              label="Santé des capteurs" 
-              percentage={96} 
-              gradient="linear-gradient(to right, #07005F, #5b21b6)" 
-            />
-            <ProgressBar 
-              label="Connexions MQTT" 
-              percentage={89} 
-              gradient="linear-gradient(to right, #3730a3, #6366f1)" 
-            />
-            <ProgressBar 
-              label="Précision détection" 
-              percentage={94} 
-              gradient="linear-gradient(to right, #7c3aed, #a78bfa)" 
-            />
-            <ProgressBar 
-              label="Stockage utilisé" 
-              percentage={67} 
-              gradient="linear-gradient(to right, rgb(234, 179, 8), rgb(234, 88, 12))" 
-            />
+            {[
+              { label: "Santé des capteurs", percentage: 96, gradient: "linear-gradient(to right, #07005F, #5b21b6)" },
+              { label: "Connexions MQTT", percentage: 89, gradient: "linear-gradient(to right, #3730a3, #6366f1)" },
+              { label: "Précision détection", percentage: 94, gradient: "linear-gradient(to right, #7c3aed, #a78bfa)" },
+              { label: "Stockage utilisé", percentage: 67, gradient: "linear-gradient(to right, rgb(234, 179, 8), rgb(234, 88, 12))" }
+            ].map((metric, index) => (
+              <ProgressBar 
+                key={metric.label}
+                label={metric.label}
+                percentage={metric.percentage}
+                gradient={metric.gradient}
+              />
+            ))}
             
             <Button className="w-full mt-4 shadow-lg hover:shadow-xl transition-all duration-200 text-base font-semibold" style={{background: 'linear-gradient(to right, #7F0202, #311156)', color: 'white'}} variant="default">
               <Activity className="w-5 h-5 mr-2" />
@@ -345,7 +338,7 @@ export default function Dashboard() {
           gradientFrom="indigo-50"
           gradientTo="purple-50"
         >
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={300} minWidth={300} minHeight={300}>
             <AreaChart data={deviceActivityData}>
               <defs>
                 <linearGradient id="colorDevices" x1="0" y1="0" x2="0" y2="1">
@@ -383,7 +376,7 @@ export default function Dashboard() {
           gradientFrom="blue-50"
           gradientTo="cyan-50"
         >
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={300} minWidth={300} minHeight={300}>
             <BarChart data={dataVolumeData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="day" stroke="#6b7280" fontSize={12} />
@@ -417,7 +410,7 @@ export default function Dashboard() {
         gradientFrom="orange-50"
         gradientTo="amber-50"
       >
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={300} minWidth={300} minHeight={300}>
           <RechartsLine data={anomalyTrendData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis dataKey="month" stroke="#6b7280" fontSize={12} />
